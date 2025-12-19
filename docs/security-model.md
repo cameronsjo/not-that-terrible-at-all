@@ -116,6 +116,34 @@ The workflow uses `GITHUB_TOKEN` which:
 - Is scoped to the repo
 - Can't be extracted and reused
 
+### Layer 6: TOTP Approval Gate (Recommended)
+
+**What it does:** Requires a 6-digit TOTP code from your phone before pulling any new image.
+
+**This is the simplest protection against GitHub org compromise.**
+
+```
+New image detected → Pushover notification → You tap link →
+Enter 6-digit code from authenticator → Image pulled
+```
+
+**Why it works:**
+- TOTP secret lives only on Unraid + your authenticator app
+- GitHub never sees the secret
+- Attacker can push malicious images, but can't approve the pull
+- No complex key management like cosign
+
+**Setup:**
+```bash
+cd /mnt/user/appdata/approval-gate
+docker-compose run --rm gate python setup.py
+# Scan QR code with authenticator app
+# Configure Pushover credentials
+docker-compose up -d
+```
+
+See `approval-gate/README.md` for full setup instructions.
+
 ## Attack Scenarios
 
 ### Scenario: Malicious PR gets merged
@@ -150,11 +178,11 @@ The workflow uses `GITHUB_TOKEN` which:
 **Attack path:** Attacker has full control of your GitHub org.
 
 **Defenses:**
-1. **Your own cosign key** → Attacker can't sign without your private key
-2. **Unraid verification** → Rejects images not signed by your key
-3. Pushover/Telegram alerts → You get notified of failed verification
+1. **TOTP Approval Gate** → Attacker can't approve without your phone
+2. **Your own cosign key** → Attacker can't sign without your private key
+3. **Unraid verification** → Rejects images not signed by your key
 
-**This is the nuclear scenario.** Your own key + Unraid verification is the only defense.
+**This is the nuclear scenario.** TOTP Approval Gate is the simplest defense. Cosign with your own key is the most robust.
 
 ## Recommended Setup
 
@@ -172,18 +200,21 @@ with:
 
 ### Standard (recommended)
 
-```yaml
-# Add environment protection
-with:
-  sign-image: true
-  environment: production
+Use **TOTP Approval Gate** - simplest protection against GitHub compromise.
+
+```bash
+# One-time setup on Unraid
+cd /mnt/user/appdata/approval-gate
+docker-compose run --rm gate python setup.py
+# Scan QR, configure Pushover, start
+docker-compose up -d
 ```
 
 Plus:
-- Use Verified Updater instead of Watchtower
-- Enable 2FA on GitHub with hardware key
+- Environment protection in workflow (optional extra approval)
+- 2FA on GitHub with hardware key
 
-### Paranoid (GitHub org compromise protection)
+### Paranoid (belt-and-suspenders)
 
 Everything in Standard, plus:
 
@@ -227,5 +258,6 @@ cosign tree ghcr.io/yourorg/yourapp:latest
 | Cosign keyless | On | N/A (automatic) | Tampering, MITM |
 | Environment protection | Off | Yes (tap to approve) | Accidental/malicious pushes |
 | Pinned actions | On | N/A | Compromised actions |
+| **TOTP Approval Gate** | Off | **Yes (enter 6-digit code)** | **GitHub org compromise** |
 | Your own signing key | Off | No (one-time setup) | GitHub org compromise |
 | Unraid verification | Off | N/A (runs on Unraid) | All of the above |

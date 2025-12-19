@@ -1,0 +1,36 @@
+# TOTP Approval Gate for Unraid
+#
+# Polls GHCR for new images, sends push notification,
+# requires TOTP code to approve the pull.
+#
+# Setup:
+#   1. docker-compose run --rm gate python setup.py
+#   2. Scan QR code with authenticator app
+#   3. Edit config/.env with Pushover credentials
+#   4. Edit config/images.json with your images
+#   5. docker-compose up -d
+
+services:
+  gate:
+    build: .
+    # Or use pre-built image:
+    # image: ghcr.io/cameronsjo/approval-gate:latest
+    container_name: approval-gate
+    restart: unless-stopped
+    ports:
+      - "9999:9999"
+    volumes:
+      # Config directory (TOTP secret, images list)
+      - ./config:/config
+      # Docker socket for pulling images and restarting containers
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - ./config/.env
+    environment:
+      - TZ=America/Chicago
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true

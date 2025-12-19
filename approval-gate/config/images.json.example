@@ -1,0 +1,10 @@
+[
+  {
+    "image": "ghcr.io/cameronsjo/my-app:latest",
+    "container": "my-app"
+  },
+  {
+    "image": "ghcr.io/cameronsjo/another-app:latest",
+    "container": "another-app"
+  }
+]

@@ -29,15 +29,20 @@ You find a cool web app on GitHub. You want to run it on your Unraid server. But
 
 ## Security First
 
-All images are signed with [cosign/Sigstore](https://docs.sigstore.dev/). Your Unraid server verifies signatures before pulling.
+**Worried about your GitHub getting hacked?** Use the TOTP Approval Gate.
+
+```
+New image ready → Push notification → Enter 6-digit code → It pulls
+```
+
+Attacker needs your phone to approve. Simple.
 
 | Layer | What | Phone-Friendly |
 |-------|------|----------------|
+| **TOTP Approval Gate** | 6-digit code to approve pulls | **Yes** |
 | Environment protection | Approve before build | Yes (tap in GitHub app) |
 | Cosign signing | Cryptographic signatures | Automatic |
 | Pinned actions | SHA-pinned dependencies | Automatic |
-| Unraid verification | Verify before pull | Automatic |
-| Your own key | GitHub-independent trust | One-time setup |
 
 See [docs/security-model.md](docs/security-model.md) for the full threat model.
 
@@ -89,12 +94,15 @@ jobs:
 not-that-terrible-at-all/
 ├── .github/workflows/
 │   └── deploy.yml                        # Reusable workflow (build + sign)
+├── approval-gate/                        # TOTP approval service
+│   ├── app.py                            # Main service
+│   ├── setup.py                          # Generate TOTP secret + QR
+│   ├── Dockerfile
+│   └── docker-compose.yml
 ├── templates/
 │   ├── Dockerfile.{node,python,go,static}
 │   ├── docker-compose.yml                # Basic Unraid deployment
-│   ├── docker-compose.verified-updater.yml  # Signature-verifying updater
-│   ├── deploy.yml                        # Workflow caller template
-│   └── env.example
+│   └── deploy.yml                        # Workflow caller template
 ├── scripts/
 │   ├── bootstrap.sh                      # Quick setup script
 │   └── verify-and-pull.sh                # Manual signature verification
