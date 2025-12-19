@@ -153,9 +153,21 @@ DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 | Endpoint | Description |
 |----------|-------------|
 | `GET /` | Status and config info |
-| `GET /pending` | List pending updates with approve URLs |
+| `GET /pending` | List pending updates (JSON) |
 | `GET /approve/<token>` | Approval page |
 | `POST /approve/<token>` | Submit TOTP code |
+| `GET /images` | Image management UI (phone-friendly) |
+| `POST /images/add` | Add image (requires TOTP) |
+| `POST /images/delete` | Remove image (requires TOTP) |
+
+## Phone-Friendly Workflow
+
+After initial setup, you never need SSH again:
+
+1. **Add new app:** Open `/images` in your browser, fill in the form, enter TOTP
+2. **Edit config:** Edit `docker-compose.yml` on GitHub (works on phone)
+3. **Approve deploy:** Tap notification link, enter TOTP
+4. **Monitor:** Bookmark `/pending` or `/images`
 
 ## Store TOTP in 1Password
 

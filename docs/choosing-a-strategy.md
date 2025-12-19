@@ -2,6 +2,21 @@
 
 This project offers two deployment strategies. Choose based on your priorities.
 
+## Phone-Friendly Reality Check
+
+Let's be honest about what requires a terminal and what doesn't:
+
+| Task | Strategy One (SSH) | Strategy Two (TOTP) |
+|------|-------------------|---------------------|
+| **One-time setup** | Terminal | Terminal |
+| **Add GitHub secrets** | Terminal/Web | N/A |
+| **Add new app to gate** | N/A | Phone (web UI at `/images`) |
+| **Edit docker-compose.yml** | Phone (GitHub web) | Phone (GitHub web) |
+| **Deploy** | Automatic | Phone (TOTP code) |
+| **Monitor pending** | GitHub Actions | Phone (`/pending`) |
+
+**Key insight:** After initial setup, Strategy Two is fully phone-friendly. Strategy One requires terminal access to add secrets for each new repo, but then runs automatically.
+
 ## Quick Decision Tree
 
 ```

@@ -12,6 +12,21 @@ You're on your phone. You find a cool web app on GitHub. You want it running on 
 4. You're worried about supply chain attacks (valid)
 5. You just want to do this from your phone (same)
 
+## Phone-Friendliness: The Honest Truth
+
+Let's be real about what you can and can't do from your phone:
+
+| Task | Strategy One (SSH) | Strategy Two (TOTP) |
+|------|-------------------|---------------------|
+| **One-time setup** | Terminal required | Terminal required |
+| **Add new app** | Terminal (secrets) | Phone (web UI) |
+| **Deploy** | Automatic | Phone (TOTP code) |
+| **Monitor** | GitHub logs | Phone (web UI) |
+
+**The bottom line:** Both strategies require terminal access for initial setup. After that, Strategy Two is *actually* phone-friendly. Strategy One is "phone-friendly" in that you don't have to do anything—it's automatic.
+
+**What about editing docker-compose.yml?** Both strategies sync config from your Git repo. Edit the file on GitHub (works on phone), push, and the new config deploys automatically. No SSH required for config changes.
+
 ## Two Strategies, One Repo
 
 Choose based on your priorities:

@@ -1,71 +1,78 @@
 # not-that-terrible-at-all
 
-Phone-friendly deployment pipeline for GitHub repos to Unraid servers, with TOTP-based security that's independent of GitHub.
+Phone-friendly deployment pipeline for GitHub repos to Unraid servers, with two strategies: fast+automated (SSH) or secure+TOTP (approval gate).
 
 ## What This Project Does
 
 Solves: "I found a cool app on GitHub and want to deploy it to my Unraid server from my phone, without worrying about supply chain attacks."
 
-**The flow:**
-1. User forks a repo, adds Dockerfile + workflow file (from phone)
-2. GitHub Actions builds image, signs with cosign, pushes to GHCR
-3. TOTP Approval Gate on Unraid detects new image
-4. User gets notification, enters 6-digit code from 1Password
-5. Gate pulls image, restarts container
+## Two Deployment Strategies
 
-**Key security property:** Even if GitHub account/org is fully compromised, attacker cannot deploy—they don't have the TOTP secret (stored in 1Password + Unraid, never touches GitHub).
+### Strategy One: SSH + SCP (Fast)
+
+```
+Push → Build → SCP configs → SSH docker-compose up → Done (~2 min)
+```
+
+- **Best for:** Experimental apps, dev/staging, rapid iteration
+- **Tradeoff:** SSH key stored in GitHub. If GitHub compromised, attacker has server access.
+- **Phone-friendly:** Automatic after setup. No interaction needed.
+
+### Strategy Two: TOTP Gate (Secure)
+
+```
+Push → Build → Gate polls → Notification → TOTP code → Pull → Done (~5 min)
+```
+
+- **Best for:** Production apps, sensitive data, paranoid users
+- **Security:** If GitHub compromised, attacker blocked by TOTP on your phone.
+- **Phone-friendly:** Web UI for image management, TOTP for approvals.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              GITHUB                                          │
-│  ┌──────────────┐    ┌────────────────────┐    ┌─────────────────────────┐  │
-│  │ User's App   │───▶│ Reusable Workflow  │───▶│ GHCR                    │  │
-│  │ Repo         │    │ (this repo)        │    │ ghcr.io/org/app:latest  │  │
-│  │              │    │ • Build image      │    │ + cosign signature      │  │
-│  │ 10-line      │    │ • Sign with cosign │    │                         │  │
-│  │ workflow.yml │    │ • Push to GHCR     │    │                         │  │
-│  └──────────────┘    └────────────────────┘    └─────────────────────────┘  │
+│  ┌──────────────┐    ┌────────────────────────────┐    ┌─────────────────┐  │
+│  │ User's App   │───▶│ deploy.yml (TOTP strategy) │───▶│ GHCR            │  │
+│  │ Repo         │    │ or                          │    │ image + config  │  │
+│  │              │    │ deploy-ssh.yml (SSH strat)  │    │ artifact        │  │
+│  └──────────────┘    └────────────────────────────┘    └─────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                                            │
-                                                            │ polls
-                                                            ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         UNRAID (via Tailscale)                               │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │ TOTP Approval Gate                                                    │   │
-│  │ ─────────────────                                                     │   │
-│  │ 1. Polls GHCR for new digests                                        │   │
-│  │ 2. New image? → Send notification (ntfy/telegram/discord/pushover)  │   │
-│  │ 3. User opens link, enters TOTP code                                 │   │
-│  │ 4. Code valid? → Pull image, restart container                       │   │
-│  │                                                                       │   │
-│  │ TOTP secret: In 1Password + here. NOT in GitHub.                     │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-│                                                                              │
-│  ┌──────────────────┐  ┌──────────────────┐                                 │
-│  │ App Container    │  │ Nginx Proxy Mgr  │                                 │
-│  │ (auto-updated)   │  │ (routes domains) │                                 │
-│  └──────────────────┘  └──────────────────┘                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+            ┌───────────────────────┴───────────────────────┐
+            │                                               │
+            ▼ Strategy One                      Strategy Two ▼
+┌───────────────────────────┐            ┌───────────────────────────┐
+│ SCP + SSH                  │            │ TOTP Approval Gate        │
+│ ────────────               │            │ ────────────────          │
+│ Push configs via SCP      │            │ Polls GHCR for changes   │
+│ Run docker-compose up     │            │ Sends notification       │
+│ via SSH                   │            │ User enters TOTP code    │
+│                           │            │ Pulls config + image     │
+│ Automatic, no approval    │            │ Restarts container       │
+└───────────────────────────┘            └───────────────────────────┘
 ```
 
 ## File Map
 
 | Path | What It Does |
 |------|--------------|
-| `.github/workflows/deploy.yml` | **Reusable workflow.** Build, cosign sign, push to GHCR. Called by user repos. |
-| `approval-gate/app.py` | **TOTP Gate service.** Flask app that polls GHCR, sends notifications, verifies TOTP, pulls images. |
+| `.github/workflows/deploy.yml` | **Strategy Two workflow.** Build, cosign sign, push image + config artifact. |
+| `.github/workflows/deploy-ssh.yml` | **Strategy One workflow.** Build, SCP, SSH. |
+| `approval-gate/app.py` | **TOTP Gate service.** Flask app: polls GHCR, web UI for images, TOTP verification. |
 | `approval-gate/setup.py` | Generates TOTP secret + QR code for initial setup. |
-| `approval-gate/docker-compose.yml` | Deploy the gate on Unraid. |
+| `templates/deploy.yml` | Strategy Two workflow template for user repos. |
+| `templates/deploy-ssh.yml` | Strategy One workflow template for user repos. |
 | `templates/Dockerfile.*` | Copy-paste Dockerfiles for node/python/go/static. |
-| `templates/deploy.yml` | The 10-line workflow users add to their repos. |
-| `scripts/verify-and-pull.sh` | Manual cosign verification (alternative to gate). |
-| `docs/security-architecture.md` | Full diagram of what protects against what. |
-| `docs/security-model.md` | Threat model and layer explanations. |
+| `docs/choosing-a-strategy.md` | Comparison guide with phone-friendliness matrix. |
+| `docs/security-architecture.md` | Full diagram of trust boundaries. |
 
 ## Key Design Decisions
+
+### Two strategies, not one
+
+Originally we built only TOTP (secure). Then we realized some users want speed over security for experimental apps. Now both strategies exist, use the right tool for each job.
 
 ### TOTP over Cosign for GitHub compromise protection
 
@@ -73,45 +80,43 @@ Solves: "I found a cool app on GitHub and want to deploy it to my Unraid server 
 - **Cosign with your key:** Key stored in GitHub secrets. If GitHub compromised, attacker has the key.
 - **TOTP:** Secret stored in 1Password + Unraid. GitHub never sees it. Attacker can push images but can't approve pulls.
 
-**Verdict:** TOTP is simpler and actually works for the "GitHub compromised" threat model. Cosign is still useful for MITM/tampering protection.
+### OCI artifacts for config sync
 
-### Multiple notification backends (or none)
+Both strategies now sync `docker-compose.yml` from Git:
+- **SSH:** SCP copies files before `docker-compose up`
+- **TOTP:** Workflow pushes config as `:config` artifact, gate pulls and extracts on approval
 
-Notifications are convenience, not security. The gate supports:
-- `none` — just check `/pending` manually
-- `ntfy` — free, self-hostable
-- `telegram` — free bot
-- `discord` — webhook
-- `pushover` — paid but polished
+This solves "config drift" where your new image needs a new port but the server has the old compose file.
 
-Default is `none` for simplest setup.
+### Web UI for image management
 
-### Reusable workflow over GitHub App
+The approval gate has `/images` endpoint with a phone-friendly UI for adding/removing monitored images. Protected by TOTP for writes.
 
-A GitHub App would auto-inject workflows, but:
-- More complex to build and maintain
-- Another thing to host
-- Single point of failure
+## Phone-Friendly Matrix
 
-Reusable workflow: user adds 10 lines, done. More transparent.
+| Task | Strategy One (SSH) | Strategy Two (TOTP) |
+|------|-------------------|---------------------|
+| One-time setup | Terminal | Terminal |
+| Add new app | Terminal (secrets) | Phone (web UI at `/images`) |
+| Edit docker-compose.yml | Phone (GitHub web) | Phone (GitHub web) |
+| Deploy | Automatic | Phone (TOTP code) |
+| Monitor | GitHub Actions | Phone (`/pending`, `/images`) |
 
 ## Common Tasks
 
 ### Adding a new Dockerfile template
 
 1. Create `templates/Dockerfile.{type}`
-2. Pattern: multi-stage build, non-root user, health check, common ports
-3. Update `scripts/bootstrap.sh` detection logic
-4. Add copy-paste example to `docs/new-app-guide.md`
+2. Pattern: multi-stage build, non-root user, health check
+3. Update `docs/new-app-guide.md`
 
 ### Updating pinned action SHAs
 
-Actions in `.github/workflows/deploy.yml` are pinned to SHA for supply chain security.
+Actions are pinned to SHA for supply chain security:
 
-1. Find new release on action's repo (e.g., `actions/checkout`)
+1. Find new release on action's repo
 2. Get full commit SHA for that tag
-3. Update SHA in workflow
-4. Add comment with version: `# v4.2.2`
+3. Update SHA in workflow, add comment with version
 
 ### Adding a notification backend
 
@@ -121,55 +126,36 @@ Actions in `.github/workflows/deploy.yml` are pinned to SHA for supply chain sec
 4. Update `.env` template in `setup.py`
 5. Document in `approval-gate/README.md`
 
-### Modifying the reusable workflow
+## API Endpoints (TOTP Gate)
 
-1. Edit `.github/workflows/deploy.yml`
-2. Test: push to branch, reference `@branch-name` from test repo
-3. Verify image builds, signs, pushes correctly
-4. Merge to main
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | Status and config info |
+| `GET /pending` | List pending updates (JSON) |
+| `GET /approve/<token>` | Approval page |
+| `POST /approve/<token>` | Submit TOTP code |
+| `GET /images` | Image management UI |
+| `POST /images/add` | Add image (requires TOTP) |
+| `POST /images/delete` | Remove image (requires TOTP) |
 
-## Security Layers Explained
+## Security Layers
 
-| Layer | Protects Against | Phone-Friendly |
+| Layer | Protects Against | Which Strategy |
 |-------|------------------|----------------|
-| TOTP Approval Gate | GitHub account/org compromise | Yes (enter code) |
-| Environment protection | Accidental/malicious PRs | Yes (tap approve) |
-| Cosign signing | MITM, registry tampering | Automatic |
-| Pinned actions | Compromised actions | Automatic |
-| OIDC auth | Stolen PATs | Automatic |
-
-**See `docs/security-architecture.md` for the full trust boundary diagram.**
-
-## Testing
-
-### Test the reusable workflow
-
-1. Create test repo with simple app
-2. Add workflow: `uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy.yml@main`
-3. Push and verify:
-   - Image appears in GHCR
-   - Cosign signature verifiable
-
-### Test the approval gate
-
-1. Run `docker-compose up` locally
-2. Add test image to `config/images.json`
-3. Push a new tag to that image
-4. Verify notification (if configured) and approval flow
+| TOTP Approval Gate | GitHub account/org compromise | Two only |
+| Config sync | Config drift between Git and server | Both |
+| Cosign signing | MITM, registry tampering | Two (optional) |
+| Pinned actions | Compromised actions | Both |
+| OIDC auth | Stolen PATs | Both |
 
 ## Dependencies
 
 - **GitHub Actions** — workflow execution
 - **GitHub Container Registry** — image storage
 - **Docker Buildx** — multi-platform builds
-- **Cosign/Sigstore** — image signing
+- **Cosign/Sigstore** — image signing (Strategy Two)
+- **ORAS** — OCI artifact push/pull for config sync
 - **Flask** — approval gate web framework
 - **pyotp** — TOTP implementation
-- **requests** — HTTP client for notifications and GHCR polling
-
-## Related Docs
-
-- [Sigstore/Cosign](https://docs.sigstore.dev/)
-- [GitHub Reusable Workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
-- [Ntfy](https://ntfy.sh/)
-- [pyotp](https://pyauth.github.io/pyotp/)
+- **appleboy/ssh-action** — SSH deployment (Strategy One)
+- **appleboy/scp-action** — SCP file transfer (Strategy One)

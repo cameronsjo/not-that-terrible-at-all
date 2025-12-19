@@ -674,6 +674,231 @@ def list_pending():
     return jsonify(pending)
 
 
+# =============================================================================
+# Image Management UI (phone-friendly)
+# =============================================================================
+
+IMAGES_PAGE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Manage Images</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, system-ui, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        .container { max-width: 600px; margin: 0 auto; }
+        h1 { margin: 0 0 8px 0; font-size: 24px; }
+        .subtitle { color: #888; margin-bottom: 24px; }
+        .card {
+            background: #16213e;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 16px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+        }
+        .image-item {
+            background: #0f3460;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+        }
+        .image-item:last-child { margin-bottom: 0; }
+        .image-name { font-family: monospace; font-size: 14px; word-break: break-all; }
+        .image-meta { color: #888; font-size: 12px; margin-top: 8px; }
+        .delete-btn {
+            background: #f44336;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            margin-top: 12px;
+        }
+        .delete-btn:hover { background: #d32f2f; }
+        h2 { font-size: 18px; margin: 0 0 16px 0; }
+        form { display: flex; flex-direction: column; gap: 12px; }
+        label { font-size: 14px; color: #888; }
+        input[type="text"] {
+            background: #0f3460;
+            border: 2px solid #333;
+            color: #fff;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-family: monospace;
+        }
+        input[type="text"]:focus { outline: none; border-color: #4CAF50; }
+        input[type="text"].code {
+            text-align: center;
+            letter-spacing: 8px;
+            font-size: 20px;
+        }
+        .btn-primary {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .btn-primary:hover { background: #45a049; }
+        .error { background: #f44336; color: white; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
+        .success { background: #4CAF50; color: white; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
+        .empty { color: #666; text-align: center; padding: 32px; }
+        .nav { margin-bottom: 24px; }
+        .nav a { color: #4CAF50; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav"><a href="/">← Back to Status</a></div>
+
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+        {% if success %}
+        <div class="success">{{ success }}</div>
+        {% endif %}
+
+        <h1>📦 Monitored Images</h1>
+        <p class="subtitle">Add or remove images from your phone</p>
+
+        <div class="card">
+            {% if images %}
+                {% for img in images %}
+                <div class="image-item">
+                    <div class="image-name">{{ img.image }}</div>
+                    <div class="image-meta">
+                        Container: {{ img.container }}
+                        {% if img.app_dir %}<br>App dir: {{ img.app_dir }}{% endif %}
+                    </div>
+                    <form method="POST" action="/images/delete" style="margin: 0;">
+                        <input type="hidden" name="image" value="{{ img.image }}">
+                        <input type="text" name="code" class="code" maxlength="6"
+                               pattern="[0-9]{6}" placeholder="TOTP" inputmode="numeric"
+                               style="width: 140px; display: inline-block; padding: 8px;">
+                        <button type="submit" class="delete-btn">Delete</button>
+                    </form>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty">No images configured yet.</div>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <h2>➕ Add New Image</h2>
+            <form method="POST" action="/images/add">
+                <div>
+                    <label>Image (e.g., ghcr.io/org/app:latest)</label>
+                    <input type="text" name="image" required placeholder="ghcr.io/yourorg/yourapp:latest">
+                </div>
+                <div>
+                    <label>Container name</label>
+                    <input type="text" name="container" required placeholder="yourapp">
+                </div>
+                <div>
+                    <label>App directory (optional, for config sync)</label>
+                    <input type="text" name="app_dir" placeholder="/mnt/user/appdata/yourapp">
+                </div>
+                <div>
+                    <label>TOTP Code</label>
+                    <input type="text" name="code" class="code" maxlength="6"
+                           pattern="[0-9]{6}" required placeholder="000000" inputmode="numeric">
+                </div>
+                <button type="submit" class="btn-primary">Add Image</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+
+@app.route("/images")
+def images_page():
+    """Image management page."""
+    images = load_images()
+    return render_template_string(IMAGES_PAGE, images=images, error=None, success=None)
+
+
+@app.route("/images/add", methods=["POST"])
+def add_image():
+    """Add a new image to monitor (requires TOTP)."""
+    code = request.form.get("code", "").strip()
+    image = request.form.get("image", "").strip()
+    container = request.form.get("container", "").strip()
+    app_dir = request.form.get("app_dir", "").strip()
+
+    # Verify TOTP
+    totp = pyotp.TOTP(CONFIG["TOTP_SECRET"])
+    if not totp.verify(code, valid_window=1):
+        images = load_images()
+        return render_template_string(IMAGES_PAGE, images=images, error="Invalid TOTP code", success=None)
+
+    if not image or not container:
+        images = load_images()
+        return render_template_string(IMAGES_PAGE, images=images, error="Image and container are required", success=None)
+
+    # Load, add, save
+    images = load_images()
+
+    # Check for duplicate
+    if any(i.get("image") == image for i in images):
+        return render_template_string(IMAGES_PAGE, images=images, error="Image already exists", success=None)
+
+    new_entry = {"image": image, "container": container}
+    if app_dir:
+        new_entry["app_dir"] = app_dir
+
+    images.append(new_entry)
+
+    images_file = Path(CONFIG["IMAGES_FILE"])
+    images_file.parent.mkdir(parents=True, exist_ok=True)
+    images_file.write_text(json.dumps(images, indent=2))
+
+    log.info("Added image via web UI: %s", image)
+    return render_template_string(IMAGES_PAGE, images=images, error=None, success=f"Added {image}")
+
+
+@app.route("/images/delete", methods=["POST"])
+def delete_image():
+    """Remove an image from monitoring (requires TOTP)."""
+    code = request.form.get("code", "").strip()
+    image = request.form.get("image", "").strip()
+
+    # Verify TOTP
+    totp = pyotp.TOTP(CONFIG["TOTP_SECRET"])
+    if not totp.verify(code, valid_window=1):
+        images = load_images()
+        return render_template_string(IMAGES_PAGE, images=images, error="Invalid TOTP code", success=None)
+
+    # Load, remove, save
+    images = load_images()
+    original_count = len(images)
+    images = [i for i in images if i.get("image") != image]
+
+    if len(images) == original_count:
+        return render_template_string(IMAGES_PAGE, images=images, error="Image not found", success=None)
+
+    images_file = Path(CONFIG["IMAGES_FILE"])
+    images_file.write_text(json.dumps(images, indent=2))
+
+    log.info("Removed image via web UI: %s", image)
+    return render_template_string(IMAGES_PAGE, images=images, error=None, success=f"Removed {image}")
+
+
 def main():
     """Entry point."""
     if not CONFIG["TOTP_SECRET"]:
