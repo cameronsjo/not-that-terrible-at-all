@@ -148,6 +148,66 @@ Actions are pinned to SHA for supply chain security:
 | Pinned actions | Compromised actions | Both |
 | OIDC auth | Stolen PATs | Both |
 
+## Claude Code: Setting Up a New Repo
+
+When asked to "set up deployment" or "deploy this app" for a GitHub repo:
+
+### 1. Detect App Type
+
+Check for these files to determine Dockerfile template:
+
+| File | App Type | Template |
+|------|----------|----------|
+| `package.json` + Node keywords | Node.js | `Dockerfile.node` |
+| `requirements.txt` or `pyproject.toml` | Python | `Dockerfile.python` |
+| `go.mod` | Go | `Dockerfile.go` |
+| `index.html` (no server) | Static | `Dockerfile.static` |
+
+### 2. Create Files
+
+**Always create these files:**
+
+1. `Dockerfile` — use appropriate template from `templates/`
+2. `.github/workflows/deploy.yml` — copy from `templates/deploy-autopilot.yml` or `templates/deploy-checkpoint.yml`
+3. `docker-compose.yml` — use template from `templates/docker-compose.yml`
+
+**Replace placeholders:**
+
+- `YOUR_ORG` → user's GitHub org/username
+- `APP_NAME` → repo name (or user-specified name)
+- Port numbers → match app type defaults
+
+### 3. Customize for App
+
+- **Entry point:** Update Dockerfile CMD if not `index.js`/`main.py`/etc.
+- **Port:** Match between Dockerfile EXPOSE and docker-compose.yml ports
+- **Build step:** Check if app needs `npm run build` or similar
+
+### 4. Mode Selection
+
+Ask user which mode they want, or use these defaults:
+
+- **Experimental/dev app** → ✈️ Autopilot
+- **Production/sensitive data** → 🛡️ Checkpoint
+- **User hasn't set up Autopilot secrets** → 🛡️ Checkpoint
+
+### 5. Checkpoint-Specific
+
+If using Checkpoint mode, remind user to:
+
+1. Add image to gate via web UI at `/images`
+2. Or provide JSON for `images.json`:
+
+```json
+{
+  "image": "ghcr.io/ORG/APP:latest",
+  "container": "APP",
+  "app_dir": "/mnt/user/appdata/APP"
+}
+```
+
+See `docs/new-app-guide.md` for complete templates and troubleshooting.
+
 ## Dependencies
 
 - **GitHub Actions** — workflow execution
