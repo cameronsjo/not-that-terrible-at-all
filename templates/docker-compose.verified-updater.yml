@@ -1,0 +1,110 @@
+# Verified Image Updater
+# Replaces Watchtower with signature verification
+#
+# Instead of auto-pulling any new image, this:
+# 1. Polls GHCR for new digests
+# 2. Verifies cosign signature before pulling
+# 3. Only updates if signature is valid
+#
+# Deploy to: /mnt/user/appdata/verified-updater/docker-compose.yml
+
+services:
+  verified-updater:
+    image: alpine:latest
+    container_name: verified-updater
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./verify-and-update.sh:/verify-and-update.sh:ro
+      - ./images.txt:/images.txt:ro
+      # Optional: your cosign public key
+      # - ./cosign.pub:/cosign.pub:ro
+    environment:
+      - GITHUB_ORG=cameronsjo
+      - POLL_INTERVAL=300  # 5 minutes
+      - TZ=America/Chicago
+      # Optional: Notification on update
+      # - PUSHOVER_TOKEN=xxx
+      # - PUSHOVER_USER=xxx
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        # Install dependencies
+        apk add --no-cache docker-cli curl bash jq
+
+        # Install cosign
+        curl -sSL https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 -o /usr/local/bin/cosign
+        chmod +x /usr/local/bin/cosign
+
+        echo "Verified updater started. Polling every $${POLL_INTERVAL}s..."
+
+        while true; do
+          echo "[$(date)] Checking for updates..."
+
+          # Read list of images to monitor
+          while IFS= read -r line || [[ -n "$$line" ]]; do
+            # Skip comments and empty lines
+            [[ "$$line" =~ ^#.*$$ ]] && continue
+            [[ -z "$$line" ]] && continue
+
+            IMAGE="$$(echo "$$line" | cut -d'|' -f1 | xargs)"
+            CONTAINER="$$(echo "$$line" | cut -d'|' -f2 | xargs)"
+
+            echo "Checking: $$IMAGE -> $$CONTAINER"
+
+            # Get current local digest
+            LOCAL_DIGEST=$$(docker inspect --format='{{index .RepoDigests 0}}' "$$IMAGE" 2>/dev/null | cut -d'@' -f2 || echo "none")
+
+            # Get remote digest
+            REMOTE_DIGEST=$$(docker manifest inspect "$$IMAGE" 2>/dev/null | jq -r '.config.digest // .manifests[0].digest' || echo "error")
+
+            if [[ "$$LOCAL_DIGEST" != "$$REMOTE_DIGEST" && "$$REMOTE_DIGEST" != "error" && "$$REMOTE_DIGEST" != "null" ]]; then
+              echo "New version available for $$IMAGE"
+              echo "  Local:  $$LOCAL_DIGEST"
+              echo "  Remote: $$REMOTE_DIGEST"
+
+              # Verify signature
+              if cosign verify "$$IMAGE" \
+                  --certificate-identity-regexp="https://github.com/$${GITHUB_ORG}/.*" \
+                  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" 2>/dev/null; then
+
+                echo "Signature verified! Pulling..."
+                docker pull "$$IMAGE"
+
+                echo "Restarting container: $$CONTAINER"
+                docker restart "$$CONTAINER" || true
+
+                echo "Updated $$CONTAINER to new version"
+
+                # Optional: Send notification
+                if [[ -n "$${PUSHOVER_TOKEN:-}" ]]; then
+                  curl -s -X POST https://api.pushover.net/1/messages.json \
+                    -d "token=$${PUSHOVER_TOKEN}" \
+                    -d "user=$${PUSHOVER_USER}" \
+                    -d "message=Updated $$CONTAINER (signature verified)" \
+                    -d "title=Verified Update"
+                fi
+              else
+                echo "SIGNATURE VERIFICATION FAILED for $$IMAGE"
+                echo "Refusing to update - possible supply chain attack!"
+
+                # Alert on failed verification
+                if [[ -n "$${PUSHOVER_TOKEN:-}" ]]; then
+                  curl -s -X POST https://api.pushover.net/1/messages.json \
+                    -d "token=$${PUSHOVER_TOKEN}" \
+                    -d "user=$${PUSHOVER_USER}" \
+                    -d "message=FAILED signature verification for $$IMAGE - possible attack!" \
+                    -d "title=SECURITY ALERT" \
+                    -d "priority=1"
+                fi
+              fi
+            fi
+          done < /images.txt
+
+          sleep "$${POLL_INTERVAL}"
+        done
+
+networks:
+  default:
+    name: proxy
+    external: true

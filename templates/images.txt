@@ -1,0 +1,12 @@
+# Images to monitor and their container names
+# Format: IMAGE | CONTAINER_NAME
+#
+# The verified-updater will:
+# 1. Check for new versions
+# 2. Verify cosign signature
+# 3. Pull and restart if verified
+#
+# Add your apps here:
+
+ghcr.io/cameronsjo/my-app:latest | my-app
+# ghcr.io/cameronsjo/another-app:latest | another-app

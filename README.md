@@ -10,21 +10,36 @@ You find a cool web app on GitHub. You want to run it on your Unraid server. But
 2. Setting up deployment pipelines requires a computer
 3. Managing secrets across apps is annoying
 4. You just want to do this from your phone while high
+5. You're paranoid about supply chain attacks
 
 ## The Solution
 
 ```
 ┌─────────────────┐     ┌──────────────┐     ┌──────────────────────┐
 │  Fork repo      │────▶│ Add 10-line  │────▶│ GitHub builds image  │
-│  Add Dockerfile │     │ workflow.yml │     │ Pushes to GHCR       │
+│  Add Dockerfile │     │ workflow.yml │     │ + signs with cosign  │
 └─────────────────┘     └──────────────┘     └──────────────────────┘
                                                         │
                                                         ▼
 ┌─────────────────┐     ┌──────────────┐     ┌──────────────────────┐
-│  App is live    │◀────│ Watchtower   │◀────│ Pulls new images     │
-│  Auto-updates   │     │ on Unraid    │     │ automatically        │
+│  App is live    │◀────│ Verified     │◀────│ Verifies signature   │
+│  Auto-updates   │     │ Updater      │     │ Pulls only if valid  │
 └─────────────────┘     └──────────────┘     └──────────────────────┘
 ```
+
+## Security First
+
+All images are signed with [cosign/Sigstore](https://docs.sigstore.dev/). Your Unraid server verifies signatures before pulling.
+
+| Layer | What | Phone-Friendly |
+|-------|------|----------------|
+| Environment protection | Approve before build | Yes (tap in GitHub app) |
+| Cosign signing | Cryptographic signatures | Automatic |
+| Pinned actions | SHA-pinned dependencies | Automatic |
+| Unraid verification | Verify before pull | Automatic |
+| Your own key | GitHub-independent trust | One-time setup |
+
+See [docs/security-model.md](docs/security-model.md) for the full threat model.
 
 ## Quick Start
 
@@ -36,7 +51,7 @@ TL;DR:
 
 1. Move Unraid WebUI to port 8443
 2. Install Nginx Proxy Manager (ports 80/443)
-3. Install Watchtower
+3. Install Verified Updater (or Watchtower)
 4. Authenticate Docker with GHCR
 
 ### Deploy a New App
@@ -57,8 +72,11 @@ on:
 
 jobs:
   deploy:
-    uses: YOUR_ORG/not-that-terrible-at-all/.github/workflows/deploy.yml@main
+    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy.yml@main
     secrets: inherit
+    with:
+      sign-image: true
+      # environment: production  # Uncomment for approval before build
 ```
 
 4. Create docker-compose on Unraid
@@ -70,50 +88,25 @@ jobs:
 ```
 not-that-terrible-at-all/
 ├── .github/workflows/
-│   └── deploy.yml           # Reusable workflow (the magic)
+│   └── deploy.yml                        # Reusable workflow (build + sign)
 ├── templates/
-│   ├── Dockerfile.node      # Node.js apps
-│   ├── Dockerfile.python    # Python apps
-│   ├── Dockerfile.static    # SPAs and static sites
-│   ├── Dockerfile.go        # Go apps
-│   ├── docker-compose.yml   # Unraid deployment template
-│   ├── deploy.yml           # Workflow caller template
-│   └── env.example          # Environment variables template
+│   ├── Dockerfile.{node,python,go,static}
+│   ├── docker-compose.yml                # Basic Unraid deployment
+│   ├── docker-compose.verified-updater.yml  # Signature-verifying updater
+│   ├── deploy.yml                        # Workflow caller template
+│   └── env.example
 ├── scripts/
-│   └── bootstrap.sh         # Quick setup script
+│   ├── bootstrap.sh                      # Quick setup script
+│   └── verify-and-pull.sh                # Manual signature verification
 ├── docs/
-│   ├── adr/
-│   │   └── 0001-deployment-architecture.md
-│   ├── unraid-setup.md      # One-time server setup
-│   └── new-app-guide.md     # Phone-friendly deploy guide
+│   ├── adr/0001-deployment-architecture.md
+│   ├── unraid-setup.md
+│   ├── new-app-guide.md
+│   └── security-model.md                 # Threat model & security layers
 └── README.md
 ```
 
-## How It Works
-
-### GitHub Side
-
-1. Your app repo has a minimal workflow that calls this repo's reusable workflow
-2. On push to main, GitHub Actions builds a Docker image
-3. Image is pushed to GitHub Container Registry (ghcr.io)
-4. Org-level secrets are inherited (no per-repo configuration)
-
-### Unraid Side
-
-1. Watchtower polls GHCR for new images every 5 minutes
-2. When a new image is found, container is automatically updated
-3. Nginx Proxy Manager routes `app.yourdomain.com` to the container
-4. All accessible via Tailscale (never exposed to public internet)
-
-### Secrets Management
-
-- Common secrets stored as GitHub Organization secrets
-- App-specific secrets in repo-level secrets or `.env` on Unraid
-- Workflows use `secrets: inherit` to access org secrets
-
 ## Workflow Inputs
-
-The reusable workflow accepts these inputs:
 
 | Input | Default | Description |
 |-------|---------|-------------|
@@ -123,40 +116,54 @@ The reusable workflow accepts these inputs:
 | `platforms` | `linux/amd64` | Target architectures |
 | `build-args` | (none) | Build arguments |
 | `tag-strategy` | `latest` | `latest`, `sha`, `branch`, or `semver` |
+| `sign-image` | `true` | Cosign signing + SBOM attestation |
+| `environment` | (none) | GitHub environment for approval |
 
-Example with all options:
+Example with security options:
 
 ```yaml
 jobs:
   deploy:
-    uses: YOUR_ORG/not-that-terrible-at-all/.github/workflows/deploy.yml@main
+    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy.yml@main
     secrets: inherit
     with:
       app-name: my-cool-app
-      dockerfile: docker/Dockerfile.prod
       platforms: linux/amd64,linux/arm64
-      tag-strategy: semver
-      build-args: |
-        NODE_ENV=production
-        API_URL=https://api.example.com
+      sign-image: true
+      environment: production  # Requires your approval before build
 ```
 
-## Architecture Decision
+## Forking This Repo
 
-See [ADR-0001](docs/adr/0001-deployment-architecture.md) for the full rationale behind:
+If you fork this repo for your own use:
 
-- Why Registry + Watchtower over SSH deploys
-- Why GitHub Org secrets over Vault
-- Why reusable workflows over GitHub Apps
-- Why Nginx Proxy Manager over Traefik
+1. Update `templates/deploy.yml` line 37 with your org/username
+2. Update `templates/images.txt` with your org/username
+3. That's it - everything else auto-detects via `${{ github.repository_owner }}`
+
+## Architecture Decisions
+
+See [ADR-0001](docs/adr/0001-deployment-architecture.md) for the full rationale.
 
 ## Requirements
 
 - GitHub account (free tier works)
-- GitHub Organization (free tier works, needed for org-level secrets)
+- GitHub Organization (free, needed for org-level secrets)
 - Unraid server with Docker enabled
-- Tailscale (or other VPN access to Unraid)
-- Domain name (optional, for pretty URLs)
+- Tailscale (or other VPN access)
+- Domain name (optional)
+
+## Verifying Images
+
+```bash
+# Verify keyless signature (Sigstore)
+cosign verify ghcr.io/yourorg/yourapp:latest \
+  --certificate-identity-regexp='https://github.com/yourorg/.*' \
+  --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
+
+# Verify with your own key
+cosign verify --key cosign.pub ghcr.io/yourorg/yourapp:latest
+```
 
 ## License
 

@@ -4,6 +4,15 @@
 #
 # This is the ONLY file you need to add to deploy your app!
 # Everything else is handled by the reusable workflow.
+#
+# Security features enabled by default:
+# - Cosign image signing (keyless via Sigstore)
+# - SBOM attestation
+# - Pinned actions (SHA, not version tags)
+#
+# Optional security (configure in GitHub settings):
+# - Environment protection (requires approval before build)
+# - Your own cosign signing key
 
 name: Deploy to Unraid
 
@@ -16,13 +25,16 @@ on:
   # tags:
   #   - 'v*'
 
-  # Allow manual trigger from GitHub UI
+  # Allow manual trigger from GitHub UI (works on phone!)
   workflow_dispatch:
 
 jobs:
   deploy:
-    # Point this to YOUR org/repo containing the reusable workflow
-    uses: YOUR_ORG/not-that-terrible-at-all/.github/workflows/deploy.yml@main
+    # ┌─────────────────────────────────────────────────────────────┐
+    # │ IMPORTANT: Update this to YOUR org/username                 │
+    # │ This is the only line you need to change!                   │
+    # └─────────────────────────────────────────────────────────────┘
+    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy.yml@main
 
     # Inherit org-level secrets automatically
     secrets: inherit
@@ -51,3 +63,17 @@ jobs:
       # Tagging strategy (default: latest)
       # Options: latest, sha, branch, semver
       # tag-strategy: latest
+
+      # ┌─────────────────────────────────────────────────────────────┐
+      # │ SECURITY OPTIONS                                            │
+      # └─────────────────────────────────────────────────────────────┘
+
+      # Sign images with cosign (default: true)
+      # Enables Sigstore keyless signing + SBOM attestation
+      sign-image: true
+
+      # Environment protection - requires approval before build
+      # Set up the environment in GitHub repo settings first:
+      #   Settings → Environments → New → "production" → Add yourself as reviewer
+      # Then uncomment:
+      # environment: production
