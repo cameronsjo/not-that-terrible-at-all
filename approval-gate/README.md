@@ -1,6 +1,6 @@
-# TOTP Approval Gate
+# 🛡️ Checkpoint Gate
 
-Secure Docker image updates with phone-based TOTP approval.
+Secure Docker image updates with phone-based TOTP approval. Part of the Checkpoint deployment mode.
 
 ## How It Works
 

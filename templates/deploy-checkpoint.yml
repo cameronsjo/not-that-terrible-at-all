@@ -1,0 +1,34 @@
+# 🛡️ CHECKPOINT MODE
+#
+# USE THIS FOR: Production apps, sensitive data, paranoid users
+# SECURITY: If GitHub compromised, attacker blocked by TOTP on your phone.
+#
+# Add this file to your app repo at: .github/workflows/deploy.yml
+# Then add entry to images.json on your Unraid approval gate (via /images web UI).
+#
+# See: https://github.com/cameronsjo/not-that-terrible-at-all/blob/main/docs/choosing-a-strategy.md
+
+name: Checkpoint Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    # ┌─────────────────────────────────────────────────────────────┐
+    # │ IMPORTANT: Update this to YOUR org/username                 │
+    # └─────────────────────────────────────────────────────────────┘
+    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy-checkpoint.yml@main
+    secrets: inherit
+
+    with:
+      # Sign images with cosign (default: true)
+      sign-image: true
+
+      # Push config artifact for sync (default: true)
+      push-config: true
+
+      # Config files to include (space-separated)
+      # config-files: "docker-compose.yml config/nginx.conf"

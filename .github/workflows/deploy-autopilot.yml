@@ -1,5 +1,5 @@
-# Strategy One: SSH + SCP GitOps Lite
-# Fast, automatic deployments with full config sync
+# ✈️ AUTOPILOT MODE
+# Fast, automatic deployments. Set it and forget it.
 #
 # USE THIS WHEN:
 #   - Speed is priority (< 2 min deploy)
@@ -18,7 +18,7 @@
 # Optional secrets:
 #   APP_ENV_SECRETS: Additional env vars for .env file
 
-name: Deploy via SSH
+name: Autopilot Deploy
 
 on:
   workflow_call:

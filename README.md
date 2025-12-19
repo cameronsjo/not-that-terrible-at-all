@@ -16,23 +16,23 @@ You're on your phone. You find a cool web app on GitHub. You want it running on 
 
 Let's be real about what you can and can't do from your phone:
 
-| Task | Strategy One (SSH) | Strategy Two (TOTP) |
-|------|-------------------|---------------------|
+| Task | ✈️ Autopilot | 🛡️ Checkpoint |
+|------|-------------|---------------|
 | **One-time setup** | Terminal required | Terminal required |
 | **Add new app** | Terminal (secrets) | Phone (web UI) |
 | **Deploy** | Automatic | Phone (TOTP code) |
 | **Monitor** | GitHub logs | Phone (web UI) |
 
-**The bottom line:** Both strategies require terminal access for initial setup. After that, Strategy Two is *actually* phone-friendly. Strategy One is "phone-friendly" in that you don't have to do anything—it's automatic.
+**The bottom line:** Both modes require terminal access for initial setup. After that, Checkpoint is *actually* phone-friendly. Autopilot is "phone-friendly" in that you don't have to do anything—it's automatic.
 
-**What about editing docker-compose.yml?** Both strategies sync config from your Git repo. Edit the file on GitHub (works on phone), push, and the new config deploys automatically. No SSH required for config changes.
+**What about editing docker-compose.yml?** Both modes sync config from your Git repo. Edit the file on GitHub (works on phone), push, and the new config deploys automatically. No SSH required for config changes.
 
-## Two Strategies, One Repo
+## Two Modes, One Repo
 
 Choose based on your priorities:
 
-| | Strategy One: SSH | Strategy Two: TOTP Gate |
-|---|-------------------|------------------------|
+| | ✈️ Autopilot | 🛡️ Checkpoint |
+|---|-------------|---------------|
 | **Speed** | ~2 min, automated | ~5 min + manual approval |
 | **GitHub compromise** | Attacker has SSH to server | Attacker blocked by TOTP |
 | **Best for** | Experimental apps | Production apps |
@@ -40,7 +40,7 @@ Choose based on your priorities:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         STRATEGY ONE (SSH)                               │
+│                         ✈️ AUTOPILOT MODE                                │
 │                                                                          │
 │  Push → Build → SCP configs → SSH docker-compose up → Done              │
 │                                                                          │
@@ -48,7 +48,7 @@ Choose based on your priorities:
 └─────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                       STRATEGY TWO (TOTP GATE)                           │
+│                         🛡️ CHECKPOINT MODE                               │
 │                                                                          │
 │  Push → Build → Gate polls → Notification → You enter 6-digit code      │
 │                                              │                           │
@@ -60,7 +60,7 @@ Choose based on your priorities:
 
 See [docs/choosing-a-strategy.md](docs/choosing-a-strategy.md) for the full comparison.
 
-## Quick Start: Strategy One (SSH)
+## Quick Start: ✈️ Autopilot
 
 Fast, automated deployments. Requires SSH key in GitHub.
 
@@ -78,7 +78,7 @@ GitHub → Your Org → Settings → Secrets → Actions:
 ### 2. Add Workflow to Your App
 
 ```yaml
-name: Deploy
+name: Autopilot Deploy
 on:
   push:
     branches: [main]
@@ -86,13 +86,13 @@ on:
 
 jobs:
   deploy:
-    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy-ssh.yml@main
+    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy-autopilot.yml@main
     secrets: inherit
 ```
 
 Done. Push to main, app deploys.
 
-## Quick Start: Strategy Two (TOTP Gate)
+## Quick Start: 🛡️ Checkpoint
 
 Secure deployments with phone-based approval.
 
@@ -118,7 +118,7 @@ docker-compose up -d
 ### 2. Add Workflow to Your App
 
 ```yaml
-name: Deploy
+name: Checkpoint Deploy
 on:
   push:
     branches: [main]
@@ -126,11 +126,15 @@ on:
 
 jobs:
   deploy:
-    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy.yml@main
+    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy-checkpoint.yml@main
     secrets: inherit
 ```
 
-### 3. Add to images.json
+### 3. Add Image via Web UI
+
+Open `http://your-gate:9999/images` on your phone, fill in the form, enter TOTP code.
+
+Or manually edit `config/images.json`:
 
 ```json
 [
@@ -146,7 +150,7 @@ Push → Build → Notification → Enter TOTP → Done.
 
 ## Security Model
 
-**Worried about your GitHub getting hacked?** Strategy Two has you covered.
+**Worried about your GitHub getting hacked?** Checkpoint mode has you covered.
 
 ```
 GitHub compromised → Attacker pushes malicious image →
@@ -168,8 +172,8 @@ See [docs/security-architecture.md](docs/security-architecture.md) for the full 
 ```
 not-that-terrible-at-all/
 ├── .github/workflows/
-│   ├── deploy.yml              # Strategy Two: TOTP Gate (secure)
-│   └── deploy-ssh.yml          # Strategy One: SSH (fast)
+│   ├── deploy-checkpoint.yml   # 🛡️ Checkpoint (secure)
+│   └── deploy-autopilot.yml    # ✈️ Autopilot (fast)
 │
 ├── approval-gate/              # TOTP approval service
 │   ├── app.py                  # Main service (Flask + polling + config sync)
@@ -184,15 +188,15 @@ not-that-terrible-at-all/
 │   ├── Dockerfile.go           # Go apps
 │   ├── Dockerfile.static       # SPAs / static sites
 │   ├── docker-compose.yml      # Basic Unraid deployment
-│   ├── deploy.yml              # Strategy Two template
-│   └── deploy-ssh.yml          # Strategy One template
+│   ├── deploy-checkpoint.yml   # 🛡️ Checkpoint template
+│   └── deploy-autopilot.yml    # ✈️ Autopilot template
 │
 ├── scripts/
 │   ├── bootstrap.sh            # Quick setup script
 │   └── verify-and-pull.sh      # Manual signature verification
 │
 └── docs/
-    ├── choosing-a-strategy.md  # Strategy comparison guide
+    ├── choosing-a-strategy.md  # Mode comparison guide
     ├── security-architecture.md # Full system diagram
     ├── unraid-setup.md         # One-time server setup
     ├── new-app-guide.md        # Phone-friendly deploy guide
@@ -202,7 +206,7 @@ not-that-terrible-at-all/
 
 ## Workflow Inputs
 
-### Strategy Two (deploy.yml)
+### 🛡️ Checkpoint (deploy-checkpoint.yml)
 
 | Input | Default | Description |
 |-------|---------|-------------|
@@ -216,7 +220,7 @@ not-that-terrible-at-all/
 | `push-config` | `true` | Push config artifact for sync |
 | `config-files` | `docker-compose.yml` | Files to include in config artifact |
 
-### Strategy One (deploy-ssh.yml)
+### ✈️ Autopilot (deploy-autopilot.yml)
 
 | Input | Default | Description |
 |-------|---------|-------------|
@@ -228,7 +232,7 @@ not-that-terrible-at-all/
 
 ## Notification Options
 
-The TOTP gate supports multiple notification methods (or none):
+The Checkpoint gate supports multiple notification methods (or none):
 
 | Method | Setup | Cost |
 |--------|-------|------|
@@ -243,12 +247,12 @@ The TOTP gate supports multiple notification methods (or none):
 - GitHub account (free tier)
 - Unraid server with Docker
 - Tailscale (or other VPN access to Unraid)
-- Phone with authenticator app (for Strategy Two)
+- Phone with authenticator app (for Checkpoint mode)
 
 ## Forking This Repo
 
-1. Update `templates/deploy.yml` line 37 with your org/username
-2. Update `templates/deploy-ssh.yml` line 21 with your org/username
+1. Update `templates/deploy-checkpoint.yml` with your org/username
+2. Update `templates/deploy-autopilot.yml` with your org/username
 3. Update `approval-gate/setup.py` default `GITHUB_ORG`
 
 ## License

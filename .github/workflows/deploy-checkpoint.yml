@@ -1,21 +1,22 @@
-# Reusable workflow for building, signing, and pushing Docker images to GHCR
-# App repos call this with minimal configuration
+# 🛡️ CHECKPOINT MODE
+# Secure deployments with TOTP approval. Nothing deploys without your say-so.
 #
 # Usage in app repo:
 #   jobs:
 #     deploy:
-#       uses: YOUR-ORG/not-that-terrible-at-all/.github/workflows/deploy.yml@main
+#       uses: YOUR-ORG/not-that-terrible-at-all/.github/workflows/deploy-checkpoint.yml@main
 #       secrets: inherit
-#       with:
-#         app-name: my-app
 #
 # Security layers:
-#   1. Environment protection (requires approval before build)
-#   2. Pinned actions (SHA, not version tags)
-#   3. Cosign image signing (keyless via Sigstore, or your own key)
-#   4. OIDC authentication (no stored tokens)
+#   1. TOTP Approval Gate (requires 6-digit code from your phone)
+#   2. Config artifact sync (keeps docker-compose.yml in sync)
+#   3. Cosign image signing (keyless via Sigstore)
+#   4. Pinned actions (SHA, not version tags)
+#   5. OIDC authentication (no stored tokens)
+#
+# If GitHub is compromised, attacker is blocked by TOTP on your phone.
 
-name: Build and Push to GHCR
+name: Checkpoint Deploy
 
 on:
   workflow_call:

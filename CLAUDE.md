@@ -1,14 +1,14 @@
 # not-that-terrible-at-all
 
-Phone-friendly deployment pipeline for GitHub repos to Unraid servers, with two strategies: fast+automated (SSH) or secure+TOTP (approval gate).
+Phone-friendly deployment pipeline for GitHub repos to Unraid servers, with two modes: ✈️ Autopilot (fast+automated) or 🛡️ Checkpoint (secure+TOTP).
 
 ## What This Project Does
 
 Solves: "I found a cool app on GitHub and want to deploy it to my Unraid server from my phone, without worrying about supply chain attacks."
 
-## Two Deployment Strategies
+## Two Deployment Modes
 
-### Strategy One: SSH + SCP (Fast)
+### ✈️ Autopilot Mode (Fast)
 
 ```
 Push → Build → SCP configs → SSH docker-compose up → Done (~2 min)
@@ -18,7 +18,7 @@ Push → Build → SCP configs → SSH docker-compose up → Done (~2 min)
 - **Tradeoff:** SSH key stored in GitHub. If GitHub compromised, attacker has server access.
 - **Phone-friendly:** Automatic after setup. No interaction needed.
 
-### Strategy Two: TOTP Gate (Secure)
+### 🛡️ Checkpoint Mode (Secure)
 
 ```
 Push → Build → Gate polls → Notification → TOTP code → Pull → Done (~5 min)
@@ -34,15 +34,15 @@ Push → Build → Gate polls → Notification → TOTP code → Pull → Done (
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              GITHUB                                          │
 │  ┌──────────────┐    ┌────────────────────────────┐    ┌─────────────────┐  │
-│  │ User's App   │───▶│ deploy.yml (TOTP strategy) │───▶│ GHCR            │  │
+│  │ User's App   │───▶│ deploy-checkpoint.yml      │───▶│ GHCR            │  │
 │  │ Repo         │    │ or                          │    │ image + config  │  │
-│  │              │    │ deploy-ssh.yml (SSH strat)  │    │ artifact        │  │
+│  │              │    │ deploy-autopilot.yml        │    │ artifact        │  │
 │  └──────────────┘    └────────────────────────────┘    └─────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
             ┌───────────────────────┴───────────────────────┐
             │                                               │
-            ▼ Strategy One                      Strategy Two ▼
+            ▼ ✈️ Autopilot                    🛡️ Checkpoint ▼
 ┌───────────────────────────┐            ┌───────────────────────────┐
 │ SCP + SSH                  │            │ TOTP Approval Gate        │
 │ ────────────               │            │ ────────────────          │
@@ -58,21 +58,21 @@ Push → Build → Gate polls → Notification → TOTP code → Pull → Done (
 
 | Path | What It Does |
 |------|--------------|
-| `.github/workflows/deploy.yml` | **Strategy Two workflow.** Build, cosign sign, push image + config artifact. |
-| `.github/workflows/deploy-ssh.yml` | **Strategy One workflow.** Build, SCP, SSH. |
+| `.github/workflows/deploy-checkpoint.yml` | **🛡️ Checkpoint workflow.** Build, cosign sign, push image + config artifact. |
+| `.github/workflows/deploy-autopilot.yml` | **✈️ Autopilot workflow.** Build, SCP, SSH. |
 | `approval-gate/app.py` | **TOTP Gate service.** Flask app: polls GHCR, web UI for images, TOTP verification. |
 | `approval-gate/setup.py` | Generates TOTP secret + QR code for initial setup. |
-| `templates/deploy.yml` | Strategy Two workflow template for user repos. |
-| `templates/deploy-ssh.yml` | Strategy One workflow template for user repos. |
+| `templates/deploy-checkpoint.yml` | 🛡️ Checkpoint workflow template for user repos. |
+| `templates/deploy-autopilot.yml` | ✈️ Autopilot workflow template for user repos. |
 | `templates/Dockerfile.*` | Copy-paste Dockerfiles for node/python/go/static. |
 | `docs/choosing-a-strategy.md` | Comparison guide with phone-friendliness matrix. |
 | `docs/security-architecture.md` | Full diagram of trust boundaries. |
 
 ## Key Design Decisions
 
-### Two strategies, not one
+### Two modes, not one
 
-Originally we built only TOTP (secure). Then we realized some users want speed over security for experimental apps. Now both strategies exist, use the right tool for each job.
+Originally we built only Checkpoint (secure). Then we realized some users want speed over security for experimental apps. Now both modes exist, use the right tool for each job.
 
 ### TOTP over Cosign for GitHub compromise protection
 
@@ -82,9 +82,9 @@ Originally we built only TOTP (secure). Then we realized some users want speed o
 
 ### OCI artifacts for config sync
 
-Both strategies now sync `docker-compose.yml` from Git:
-- **SSH:** SCP copies files before `docker-compose up`
-- **TOTP:** Workflow pushes config as `:config` artifact, gate pulls and extracts on approval
+Both modes sync `docker-compose.yml` from Git:
+- **Autopilot:** SCP copies files before `docker-compose up`
+- **Checkpoint:** Workflow pushes config as `:config` artifact, gate pulls and extracts on approval
 
 This solves "config drift" where your new image needs a new port but the server has the old compose file.
 
@@ -94,8 +94,8 @@ The approval gate has `/images` endpoint with a phone-friendly UI for adding/rem
 
 ## Phone-Friendly Matrix
 
-| Task | Strategy One (SSH) | Strategy Two (TOTP) |
-|------|-------------------|---------------------|
+| Task | ✈️ Autopilot | 🛡️ Checkpoint |
+|------|-------------|---------------|
 | One-time setup | Terminal | Terminal |
 | Add new app | Terminal (secrets) | Phone (web UI at `/images`) |
 | Edit docker-compose.yml | Phone (GitHub web) | Phone (GitHub web) |
@@ -126,7 +126,7 @@ Actions are pinned to SHA for supply chain security:
 4. Update `.env` template in `setup.py`
 5. Document in `approval-gate/README.md`
 
-## API Endpoints (TOTP Gate)
+## API Endpoints (Checkpoint Gate)
 
 | Endpoint | Description |
 |----------|-------------|
@@ -140,11 +140,11 @@ Actions are pinned to SHA for supply chain security:
 
 ## Security Layers
 
-| Layer | Protects Against | Which Strategy |
-|-------|------------------|----------------|
-| TOTP Approval Gate | GitHub account/org compromise | Two only |
+| Layer | Protects Against | Which Mode |
+|-------|------------------|------------|
+| TOTP Approval Gate | GitHub account/org compromise | Checkpoint only |
 | Config sync | Config drift between Git and server | Both |
-| Cosign signing | MITM, registry tampering | Two (optional) |
+| Cosign signing | MITM, registry tampering | Checkpoint (optional) |
 | Pinned actions | Compromised actions | Both |
 | OIDC auth | Stolen PATs | Both |
 
@@ -153,9 +153,9 @@ Actions are pinned to SHA for supply chain security:
 - **GitHub Actions** — workflow execution
 - **GitHub Container Registry** — image storage
 - **Docker Buildx** — multi-platform builds
-- **Cosign/Sigstore** — image signing (Strategy Two)
+- **Cosign/Sigstore** — image signing (Checkpoint)
 - **ORAS** — OCI artifact push/pull for config sync
 - **Flask** — approval gate web framework
 - **pyotp** — TOTP implementation
-- **appleboy/ssh-action** — SSH deployment (Strategy One)
-- **appleboy/scp-action** — SCP file transfer (Strategy One)
+- **appleboy/ssh-action** — SSH deployment (Autopilot)
+- **appleboy/scp-action** — SCP file transfer (Autopilot)

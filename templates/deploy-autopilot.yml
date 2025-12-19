@@ -1,4 +1,4 @@
-# Strategy One: SSH + SCP (Fast, Automated)
+# ✈️ AUTOPILOT MODE
 #
 # USE THIS FOR: Experimental apps, dev/staging, rapid iteration
 # TRADEOFF: SSH key in GitHub. If GitHub compromised, attacker has server access.
@@ -8,7 +8,7 @@
 #
 # See: https://github.com/cameronsjo/not-that-terrible-at-all/blob/main/docs/choosing-a-strategy.md
 
-name: Deploy
+name: Autopilot Deploy
 
 on:
   push:
@@ -17,7 +17,7 @@ on:
 
 jobs:
   deploy:
-    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy-ssh.yml@main
+    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy-autopilot.yml@main
     secrets: inherit
     # with:
     #   config-files: "docker-compose.yml,config/*"  # Files to SCP

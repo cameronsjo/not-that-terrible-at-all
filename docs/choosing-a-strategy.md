@@ -1,38 +1,38 @@
-# Choosing a Deployment Strategy
+# Choosing a Deployment Mode
 
-This project offers two deployment strategies. Choose based on your priorities.
+This project offers two deployment modes. Choose based on your priorities.
 
 ## Phone-Friendly Reality Check
 
 Let's be honest about what requires a terminal and what doesn't:
 
-| Task | Strategy One (SSH) | Strategy Two (TOTP) |
-|------|-------------------|---------------------|
+| Task | ✈️ Autopilot | 🛡️ Checkpoint |
+|------|-------------|---------------|
 | **One-time setup** | Terminal | Terminal |
 | **Add GitHub secrets** | Terminal/Web | N/A |
 | **Add new app to gate** | N/A | Phone (web UI at `/images`) |
 | **Edit docker-compose.yml** | Phone (GitHub web) | Phone (GitHub web) |
 | **Deploy** | Automatic | Phone (TOTP code) |
-| **Monitor pending** | GitHub Actions | Phone (`/pending`) |
+| **Monitor pending** | GitHub Actions | Phone (`/pending`, `/images`) |
 
-**Key insight:** After initial setup, Strategy Two is fully phone-friendly. Strategy One requires terminal access to add secrets for each new repo, but then runs automatically.
+**Key insight:** After initial setup, Checkpoint is fully phone-friendly. Autopilot requires terminal access to add secrets for each new repo, but then runs automatically.
 
 ## Quick Decision Tree
 
 ```
 Do you want protection if your GitHub account is compromised?
 │
-├─ Yes → Strategy Two (TOTP Gate)
+├─ Yes → 🛡️ Checkpoint
 │        Security first. Manual approval required.
 │
-└─ No  → Strategy One (SSH + SCP)
+└─ No  → ✈️ Autopilot
          Speed first. Fully automated.
 ```
 
-## Strategy Comparison
+## Mode Comparison
 
-| Aspect | Strategy One (SSH) | Strategy Two (TOTP) |
-|--------|-------------------|---------------------|
+| Aspect | ✈️ Autopilot | 🛡️ Checkpoint |
+|--------|-------------|---------------|
 | **Speed** | ~2 min (automated) | ~5 min + manual approval |
 | **GitHub compromise** | Full server access | Blocked by TOTP |
 | **Secrets in GitHub** | SSH key, PAT, host/user | None |
@@ -40,20 +40,20 @@ Do you want protection if your GitHub account is compromised?
 | **Network** | Inbound to Unraid | Outbound only |
 | **Setup complexity** | Per-repo secrets | One-time gate setup |
 
-## Strategy One: SSH + SCP
+## ✈️ Autopilot Mode
 
 **Best for:** Experimental apps, rapid iteration, trusted environments.
 
 ```yaml
 # .github/workflows/deploy.yml
-name: Deploy
+name: Autopilot Deploy
 on:
   push:
     branches: [main]
 
 jobs:
   deploy:
-    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy-ssh.yml@main
+    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy-autopilot.yml@main
     secrets: inherit
     with:
       config-files: "docker-compose.yml,config/*"
@@ -85,20 +85,20 @@ GitHub account compromised?
       └─ Game over
 ```
 
-## Strategy Two: TOTP Gate
+## 🛡️ Checkpoint Mode
 
 **Best for:** Production apps, sensitive data, paranoid users.
 
 ```yaml
 # .github/workflows/deploy.yml
-name: Deploy
+name: Checkpoint Deploy
 on:
   push:
     branches: [main]
 
 jobs:
   deploy:
-    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy.yml@main
+    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy-checkpoint.yml@main
     secrets: inherit
 ```
 
@@ -106,7 +106,7 @@ jobs:
 
 1. Run approval gate on Unraid (one-time)
 2. Scan QR code with 1Password (one-time)
-3. Add entry to `images.json` (per app)
+3. Add entry via web UI at `/images` (per app, phone-friendly)
 
 ### Flow
 
@@ -131,7 +131,7 @@ GitHub account compromised?
 
 ## Hybrid Approach
 
-Use both strategies for different apps:
+Use both modes for different apps:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -143,31 +143,31 @@ Use both strategies for different apps:
 │  • Dev/staging             │  • Apps with user data          │
 │  • Non-sensitive           │  • Infrastructure tools         │
 │                            │                                  │
-│  → Strategy One (SSH)      │  → Strategy Two (TOTP)          │
+│  → ✈️ Autopilot            │  → 🛡️ Checkpoint                │
 │                            │                                  │
-│  deploy-ssh.yml            │  deploy.yml                     │
+│  deploy-autopilot.yml      │  deploy-checkpoint.yml          │
 │  Fast, automated           │  Secure, manual approval        │
 └────────────────────────────┴────────────────────────────────┘
 ```
 
 ## Config Drift: Solved in Both
 
-Both strategies now sync your `docker-compose.yml` from Git:
+Both modes sync your `docker-compose.yml` from Git:
 
-| Strategy | How Config Syncs |
-|----------|-----------------|
-| SSH | SCP copies files before `docker-compose up` |
-| TOTP | OCI artifact pulled before restart |
+| Mode | How Config Syncs |
+|------|-----------------|
+| Autopilot | SCP copies files before `docker-compose up` |
+| Checkpoint | OCI artifact pulled before restart |
 
 If you add a new port or env var in Git, it deploys with the new image.
 
 ## Migration Path
 
-Start with Strategy One for developer satisfaction. As your homelab matures:
+Start with Autopilot for developer satisfaction. As your homelab matures:
 
 1. Identify critical apps (data, infrastructure)
-2. Set up TOTP gate once
-3. Move critical apps to Strategy Two
-4. Keep experimental apps on Strategy One
+2. Set up Checkpoint gate once
+3. Move critical apps to Checkpoint
+4. Keep experimental apps on Autopilot
 
 No need to choose upfront. Use the right tool for each job.
