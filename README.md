@@ -1,16 +1,16 @@
 # not-that-terrible-at-all
 
-Deploy GitHub repos to your Unraid server from your phone in 5 minutes.
+> Deploy GitHub repos to your Unraid server from your phone. Yes, really.
 
 ## The Problem
 
-You find a cool web app on GitHub. You want to run it on your Unraid server. But:
+You're on your phone. You find a cool web app on GitHub. You want it running on your Unraid server. But:
 
-1. It doesn't have a Dockerfile (easy fix)
-2. Setting up deployment pipelines requires a computer
-3. Managing secrets across apps is annoying
-4. You just want to do this from your phone while high
-5. You're paranoid about supply chain attacks
+1. No Dockerfile (fixable)
+2. Setting up deployment pipelines requires a computer (annoying)
+3. Managing secrets across apps is tedious (very annoying)
+4. You're worried about supply chain attacks (valid)
+5. You just want to do this from your phone (same)
 
 ## The Solution
 
@@ -22,97 +22,133 @@ You find a cool web app on GitHub. You want to run it on your Unraid server. But
                                                         │
                                                         ▼
 ┌─────────────────┐     ┌──────────────┐     ┌──────────────────────┐
-│  App is live    │◀────│ Verified     │◀────│ Verifies signature   │
-│  Auto-updates   │     │ Updater      │     │ Pulls only if valid  │
+│  App is live    │◀────│ TOTP Gate    │◀────│ You enter 6-digit    │
+│  Auto-updates   │     │ (optional)   │     │ code to approve      │
 └─────────────────┘     └──────────────┘     └──────────────────────┘
 ```
 
-## Security First
+## Security Model
 
-**Worried about your GitHub getting hacked?** Use the TOTP Approval Gate.
+**Worried about your GitHub getting hacked?** The TOTP Approval Gate has you covered.
 
 ```
-New image ready → Push notification → Enter 6-digit code → It pulls
+GitHub compromised → Attacker pushes malicious image →
+TOTP Gate asks for 6-digit code → Attacker doesn't have your phone →
+Attack blocked
 ```
 
-Attacker needs your phone to approve. Simple.
+| Layer | What | Protects Against | Phone-Friendly |
+|-------|------|------------------|----------------|
+| **TOTP Approval Gate** | 6-digit code before any pull | GitHub account/org compromise | Yes |
+| Environment protection | Approve before build | Accidental deploys | Yes |
+| Cosign signing | Cryptographic image signatures | Tampering, MITM | Automatic |
+| Pinned actions | SHA-pinned dependencies | Compromised actions | Automatic |
 
-| Layer | What | Phone-Friendly |
-|-------|------|----------------|
-| **TOTP Approval Gate** | 6-digit code to approve pulls | **Yes** |
-| Environment protection | Approve before build | Yes (tap in GitHub app) |
-| Cosign signing | Cryptographic signatures | Automatic |
-| Pinned actions | SHA-pinned dependencies | Automatic |
+**The key insight:** TOTP secret lives in your 1Password + Unraid. Never touches GitHub. Even if your entire GitHub org is compromised, attacker can't approve deployments.
 
-See [docs/security-model.md](docs/security-model.md) for the full threat model.
+See [docs/security-architecture.md](docs/security-architecture.md) for the full diagram.
 
 ## Quick Start
 
 ### One-Time Unraid Setup
 
-See [docs/unraid-setup.md](docs/unraid-setup.md) for complete instructions.
+```bash
+# 1. Install the TOTP Approval Gate
+mkdir -p /mnt/user/appdata/approval-gate
+cd /mnt/user/appdata/approval-gate
+# Copy files from this repo's approval-gate/ directory
 
-TL;DR:
+# 2. Run setup (generates QR code)
+docker-compose run --rm gate python setup.py
 
-1. Move Unraid WebUI to port 8443
-2. Install Nginx Proxy Manager (ports 80/443)
-3. Install Verified Updater (or Watchtower)
-4. Authenticate Docker with GHCR
+# 3. Scan QR code with 1Password or any authenticator
+
+# 4. Edit config/.env
+#    - Set GATE_URL to your Tailscale URL
+#    - Optionally configure notifications (ntfy, telegram, discord, pushover)
+
+# 5. Add images to monitor in config/images.json
+
+# 6. Start
+docker-compose up -d
+```
+
+See [docs/unraid-setup.md](docs/unraid-setup.md) for Nginx Proxy Manager setup.
 
 ### Deploy a New App
 
-See [docs/new-app-guide.md](docs/new-app-guide.md) for the phone-friendly walkthrough.
+From your phone:
 
-TL;DR:
-
-1. Fork the repo to your org
-2. Add a Dockerfile (use templates in `/templates`)
-3. Add `.github/workflows/deploy.yml`:
+1. **Fork** the repo you want to deploy
+2. **Add Dockerfile** (copy from `templates/Dockerfile.*`)
+3. **Add workflow** at `.github/workflows/deploy.yml`:
 
 ```yaml
 name: Deploy
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   deploy:
     uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy.yml@main
     secrets: inherit
-    with:
-      sign-image: true
-      # environment: production  # Uncomment for approval before build
 ```
 
-4. Create docker-compose on Unraid
-5. Add to Nginx Proxy Manager
-6. Done
+4. **Add to Unraid** - edit `config/images.json` on your approval gate
+5. **Push** - image builds, you get notified, enter TOTP, done
+
+See [docs/new-app-guide.md](docs/new-app-guide.md) for the complete walkthrough.
 
 ## Project Structure
 
 ```
 not-that-terrible-at-all/
 ├── .github/workflows/
-│   └── deploy.yml                        # Reusable workflow (build + sign)
-├── approval-gate/                        # TOTP approval service
-│   ├── app.py                            # Main service
-│   ├── setup.py                          # Generate TOTP secret + QR
+│   └── deploy.yml              # Reusable workflow (build + sign)
+│
+├── approval-gate/              # TOTP approval service
+│   ├── app.py                  # Main service (Flask + polling)
+│   ├── setup.py                # Generate TOTP secret + QR code
 │   ├── Dockerfile
-│   └── docker-compose.yml
+│   ├── docker-compose.yml
+│   └── README.md               # Detailed setup instructions
+│
 ├── templates/
-│   ├── Dockerfile.{node,python,go,static}
-│   ├── docker-compose.yml                # Basic Unraid deployment
-│   └── deploy.yml                        # Workflow caller template
+│   ├── Dockerfile.node         # Node.js apps
+│   ├── Dockerfile.python       # Python apps
+│   ├── Dockerfile.go           # Go apps
+│   ├── Dockerfile.static       # SPAs / static sites
+│   ├── docker-compose.yml      # Basic Unraid deployment
+│   └── deploy.yml              # Workflow caller template
+│
 ├── scripts/
-│   ├── bootstrap.sh                      # Quick setup script
-│   └── verify-and-pull.sh                # Manual signature verification
-├── docs/
-│   ├── adr/0001-deployment-architecture.md
-│   ├── unraid-setup.md
-│   ├── new-app-guide.md
-│   └── security-model.md                 # Threat model & security layers
-└── README.md
+│   ├── bootstrap.sh            # Quick setup script
+│   └── verify-and-pull.sh      # Manual signature verification
+│
+└── docs/
+    ├── adr/
+    │   └── 0001-deployment-architecture.md
+    ├── unraid-setup.md         # One-time server setup
+    ├── new-app-guide.md        # Phone-friendly deploy guide
+    ├── security-model.md       # Threat model & mitigations
+    └── security-architecture.md # Full system diagram
 ```
+
+## Notification Options
+
+The approval gate supports multiple notification methods (or none):
+
+| Method | Setup | Cost |
+|--------|-------|------|
+| **none** | Just bookmark `/pending` | Free |
+| **ntfy** | Self-hostable, no account needed | Free |
+| **telegram** | Create a bot | Free |
+| **discord** | Create a webhook | Free |
+| **pushover** | Create an account | $5 one-time |
+
+Notifications are optional. The security comes from TOTP, not the notification channel.
 
 ## Workflow Inputs
 
@@ -123,55 +159,32 @@ not-that-terrible-at-all/
 | `context` | `.` | Docker build context |
 | `platforms` | `linux/amd64` | Target architectures |
 | `build-args` | (none) | Build arguments |
-| `tag-strategy` | `latest` | `latest`, `sha`, `branch`, or `semver` |
+| `tag-strategy` | `latest` | `latest`, `sha`, `branch`, `semver` |
 | `sign-image` | `true` | Cosign signing + SBOM attestation |
-| `environment` | (none) | GitHub environment for approval |
-
-Example with security options:
-
-```yaml
-jobs:
-  deploy:
-    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy.yml@main
-    secrets: inherit
-    with:
-      app-name: my-cool-app
-      platforms: linux/amd64,linux/arm64
-      sign-image: true
-      environment: production  # Requires your approval before build
-```
+| `environment` | (none) | GitHub environment for build approval |
 
 ## Forking This Repo
 
-If you fork this repo for your own use:
-
 1. Update `templates/deploy.yml` line 37 with your org/username
-2. Update `templates/images.txt` with your org/username
-3. That's it - everything else auto-detects via `${{ github.repository_owner }}`
-
-## Architecture Decisions
-
-See [ADR-0001](docs/adr/0001-deployment-architecture.md) for the full rationale.
+2. Update `approval-gate/setup.py` default `GITHUB_ORG`
+3. That's it—everything else auto-detects
 
 ## Requirements
 
-- GitHub account (free tier works)
-- GitHub Organization (free, needed for org-level secrets)
-- Unraid server with Docker enabled
-- Tailscale (or other VPN access)
-- Domain name (optional)
+- GitHub account (free tier)
+- Unraid server with Docker
+- Tailscale (or other VPN access to Unraid)
+- Phone with authenticator app (1Password works great)
 
-## Verifying Images
+## Architecture Decisions
 
-```bash
-# Verify keyless signature (Sigstore)
-cosign verify ghcr.io/yourorg/yourapp:latest \
-  --certificate-identity-regexp='https://github.com/yourorg/.*' \
-  --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
+See [ADR-0001](docs/adr/0001-deployment-architecture.md) for why we chose:
 
-# Verify with your own key
-cosign verify --key cosign.pub ghcr.io/yourorg/yourapp:latest
-```
+- Registry + TOTP Gate over SSH deploys
+- GitHub Org secrets over Vault
+- Reusable workflows over GitHub Apps
+- Cosign for optional cryptographic verification
+- TOTP for GitHub-independent authentication
 
 ## License
 
