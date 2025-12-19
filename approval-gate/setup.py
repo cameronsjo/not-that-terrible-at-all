@@ -52,24 +52,52 @@ def main():
 TOTP_SECRET={secret}
 TOTP_ISSUER={issuer}
 
-# Pushover notifications (required)
-PUSHOVER_TOKEN=
-PUSHOVER_USER=
+# =============================================================================
+# Notification method: ntfy, telegram, pushover, discord, or none
+# =============================================================================
+NOTIFY_METHOD=none
+
+# --- Ntfy (recommended - free, self-hostable) ---
+# NOTIFY_METHOD=ntfy
+# NTFY_URL=https://ntfy.sh
+# NTFY_TOPIC=my-random-topic-name
+# NTFY_TOKEN=
+
+# --- Telegram ---
+# NOTIFY_METHOD=telegram
+# TELEGRAM_BOT_TOKEN=
+# TELEGRAM_CHAT_ID=
+
+# --- Pushover ---
+# NOTIFY_METHOD=pushover
+# PUSHOVER_TOKEN=
+# PUSHOVER_USER=
+
+# --- Discord ---
+# NOTIFY_METHOD=discord
+# DISCORD_WEBHOOK_URL=
+
+# =============================================================================
+# Required settings
+# =============================================================================
+
+# External URL for approval links (your Tailscale/accessible URL)
+GATE_URL=http://localhost:9999
 
 # Your GitHub org/username
 GITHUB_ORG=cameronsjo
 
-# GHCR authentication (optional, for private images)
+# =============================================================================
+# Optional settings
+# =============================================================================
+
+# GHCR authentication (for private images)
 # Generate at: GitHub → Settings → Developer settings → Personal access tokens
 # Scope: read:packages
 GHCR_TOKEN=
 
 # How often to check for updates (seconds)
 POLL_INTERVAL=300
-
-# External URL for approval links in notifications
-# Change to your Tailscale/public URL
-GATE_URL=http://localhost:9999
 
 # Approval timeout (seconds) - how long before pending updates expire
 APPROVAL_TIMEOUT=3600

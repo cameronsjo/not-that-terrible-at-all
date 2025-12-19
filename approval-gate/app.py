@@ -4,9 +4,15 @@ TOTP Approval Gate for Docker Image Updates
 
 Polls GHCR for new images, sends push notification, requires TOTP to approve pull.
 Completely decoupled from GitHub - attacker needs your phone to approve.
+
+Supports multiple notification methods:
+- Ntfy (self-hosted, no account needed)
+- Telegram (free bot)
+- Pushover (paid but polished)
+- Discord (webhook)
+- None (just check the web UI)
 """
 
-import hashlib
 import json
 import logging
 import os
@@ -20,21 +26,43 @@ from pathlib import Path
 
 import pyotp
 import requests
-from flask import Flask, jsonify, redirect, render_template_string, request
+from flask import Flask, jsonify, render_template_string, request
 
 # Configuration from environment
 CONFIG = {
+    # TOTP settings
     "TOTP_SECRET": os.environ.get("TOTP_SECRET", ""),
     "TOTP_ISSUER": os.environ.get("TOTP_ISSUER", "UnraidDeploy"),
+
+    # Notification method: "ntfy", "telegram", "pushover", "discord", or "none"
+    "NOTIFY_METHOD": os.environ.get("NOTIFY_METHOD", "none"),
+
+    # Ntfy (recommended - self-hostable, no account needed)
+    "NTFY_URL": os.environ.get("NTFY_URL", "https://ntfy.sh"),
+    "NTFY_TOPIC": os.environ.get("NTFY_TOPIC", ""),
+    "NTFY_TOKEN": os.environ.get("NTFY_TOKEN", ""),  # Optional auth
+
+    # Telegram
+    "TELEGRAM_BOT_TOKEN": os.environ.get("TELEGRAM_BOT_TOKEN", ""),
+    "TELEGRAM_CHAT_ID": os.environ.get("TELEGRAM_CHAT_ID", ""),
+
+    # Pushover
     "PUSHOVER_TOKEN": os.environ.get("PUSHOVER_TOKEN", ""),
     "PUSHOVER_USER": os.environ.get("PUSHOVER_USER", ""),
+
+    # Discord
+    "DISCORD_WEBHOOK_URL": os.environ.get("DISCORD_WEBHOOK_URL", ""),
+
+    # GHCR settings
     "GITHUB_ORG": os.environ.get("GITHUB_ORG", ""),
     "GHCR_TOKEN": os.environ.get("GHCR_TOKEN", ""),
+
+    # Polling settings
     "POLL_INTERVAL": int(os.environ.get("POLL_INTERVAL", "300")),
     "GATE_URL": os.environ.get("GATE_URL", "http://localhost:9999"),
     "IMAGES_FILE": os.environ.get("IMAGES_FILE", "/config/images.json"),
     "STATE_FILE": os.environ.get("STATE_FILE", "/config/state.json"),
-    "APPROVAL_TIMEOUT": int(os.environ.get("APPROVAL_TIMEOUT", "3600")),  # 1 hour
+    "APPROVAL_TIMEOUT": int(os.environ.get("APPROVAL_TIMEOUT", "3600")),
 }
 
 logging.basicConfig(
@@ -55,7 +83,7 @@ class PendingUpdate:
     old_digest: str
     new_digest: str
     detected_at: datetime
-    token: str  # Random token for this approval request
+    token: str
 
 
 # In-memory state
@@ -88,8 +116,6 @@ def load_images() -> list[dict]:
 
 def get_remote_digest(image: str) -> str | None:
     """Fetch current digest from GHCR."""
-    # Parse image name
-    # Format: ghcr.io/org/name:tag
     if not image.startswith("ghcr.io/"):
         log.warning("Only GHCR images supported: %s", image)
         return None
@@ -117,19 +143,89 @@ def get_remote_digest(image: str) -> str | None:
     return None
 
 
-def send_notification(update: PendingUpdate) -> bool:
-    """Send Pushover notification."""
-    if not CONFIG["PUSHOVER_TOKEN"] or not CONFIG["PUSHOVER_USER"]:
-        log.warning("Pushover not configured, skipping notification")
+# =============================================================================
+# Notification backends
+# =============================================================================
+
+
+def notify_ntfy(update: PendingUpdate, approve_url: str) -> bool:
+    """Send notification via Ntfy."""
+    if not CONFIG["NTFY_TOPIC"]:
+        log.warning("NTFY_TOPIC not configured")
         return False
 
-    approve_url = f"{CONFIG['GATE_URL']}/approve/{update.token}"
+    url = f"{CONFIG['NTFY_URL']}/{CONFIG['NTFY_TOPIC']}"
+    headers = {
+        "Title": "Deploy Approval Required",
+        "Priority": "high",
+        "Tags": "whale,lock",
+        "Click": approve_url,
+        "Actions": f"view, Approve, {approve_url}",
+    }
+
+    if CONFIG["NTFY_TOKEN"]:
+        headers["Authorization"] = f"Bearer {CONFIG['NTFY_TOKEN']}"
+
+    message = f"New image: {update.image}\nContainer: {update.container}"
+
+    try:
+        resp = requests.post(url, data=message, headers=headers, timeout=30)
+        if resp.status_code == 200:
+            log.info("Ntfy notification sent for %s", update.image)
+            return True
+        log.error("Ntfy error: %s", resp.text)
+    except Exception as e:
+        log.error("Failed to send Ntfy notification: %s", e)
+
+    return False
+
+
+def notify_telegram(update: PendingUpdate, approve_url: str) -> bool:
+    """Send notification via Telegram."""
+    if not CONFIG["TELEGRAM_BOT_TOKEN"] or not CONFIG["TELEGRAM_CHAT_ID"]:
+        log.warning("Telegram not configured")
+        return False
+
+    url = f"https://api.telegram.org/bot{CONFIG['TELEGRAM_BOT_TOKEN']}/sendMessage"
+
+    message = (
+        f"🐳 *Deploy Approval Required*\n\n"
+        f"Image: `{update.image}`\n"
+        f"Container: `{update.container}`\n\n"
+        f"[Tap to approve]({approve_url})"
+    )
+
+    try:
+        resp = requests.post(
+            url,
+            json={
+                "chat_id": CONFIG["TELEGRAM_CHAT_ID"],
+                "text": message,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True,
+            },
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            log.info("Telegram notification sent for %s", update.image)
+            return True
+        log.error("Telegram error: %s", resp.text)
+    except Exception as e:
+        log.error("Failed to send Telegram notification: %s", e)
+
+    return False
+
+
+def notify_pushover(update: PendingUpdate, approve_url: str) -> bool:
+    """Send notification via Pushover."""
+    if not CONFIG["PUSHOVER_TOKEN"] or not CONFIG["PUSHOVER_USER"]:
+        log.warning("Pushover not configured")
+        return False
 
     message = (
         f"🐳 New image available\n\n"
         f"Image: {update.image}\n"
-        f"Container: {update.container}\n\n"
-        f"Tap to approve update:"
+        f"Container: {update.container}"
     )
 
     try:
@@ -142,19 +238,75 @@ def send_notification(update: PendingUpdate) -> bool:
                 "title": "Deploy Approval Required",
                 "url": approve_url,
                 "url_title": "Approve Update",
-                "priority": 1,  # High priority
+                "priority": 1,
                 "sound": "pushover",
             },
             timeout=30,
         )
         if resp.status_code == 200:
-            log.info("Notification sent for %s", update.image)
+            log.info("Pushover notification sent for %s", update.image)
             return True
         log.error("Pushover error: %s", resp.text)
     except Exception as e:
-        log.error("Failed to send notification: %s", e)
+        log.error("Failed to send Pushover notification: %s", e)
 
     return False
+
+
+def notify_discord(update: PendingUpdate, approve_url: str) -> bool:
+    """Send notification via Discord webhook."""
+    if not CONFIG["DISCORD_WEBHOOK_URL"]:
+        log.warning("Discord webhook not configured")
+        return False
+
+    embed = {
+        "title": "🐳 Deploy Approval Required",
+        "color": 3447003,  # Blue
+        "fields": [
+            {"name": "Image", "value": f"`{update.image}`", "inline": False},
+            {"name": "Container", "value": f"`{update.container}`", "inline": False},
+        ],
+        "footer": {"text": "Enter TOTP code to approve"},
+    }
+
+    try:
+        resp = requests.post(
+            CONFIG["DISCORD_WEBHOOK_URL"],
+            json={
+                "content": f"**New deployment pending approval**\n{approve_url}",
+                "embeds": [embed],
+            },
+            timeout=30,
+        )
+        if resp.status_code in (200, 204):
+            log.info("Discord notification sent for %s", update.image)
+            return True
+        log.error("Discord error: %s", resp.text)
+    except Exception as e:
+        log.error("Failed to send Discord notification: %s", e)
+
+    return False
+
+
+def send_notification(update: PendingUpdate) -> bool:
+    """Send notification via configured method."""
+    approve_url = f"{CONFIG['GATE_URL']}/approve/{update.token}"
+    method = CONFIG["NOTIFY_METHOD"].lower()
+
+    if method == "none":
+        log.info("Notifications disabled. Pending approval at: %s", approve_url)
+        return True
+    elif method == "ntfy":
+        return notify_ntfy(update, approve_url)
+    elif method == "telegram":
+        return notify_telegram(update, approve_url)
+    elif method == "pushover":
+        return notify_pushover(update, approve_url)
+    elif method == "discord":
+        return notify_discord(update, approve_url)
+    else:
+        log.warning("Unknown notification method: %s", method)
+        return False
 
 
 def pull_and_restart(image: str, container: str) -> bool:
@@ -194,7 +346,6 @@ def check_for_updates() -> None:
         if known_digest != current_digest:
             log.info("New version detected for %s", image)
 
-            # Check if already pending
             with state_lock:
                 already_pending = any(
                     u.image == image and u.new_digest == current_digest
@@ -205,7 +356,6 @@ def check_for_updates() -> None:
                 log.info("Update already pending approval for %s", image)
                 continue
 
-            # Create pending update
             token = secrets.token_urlsafe(32)
             update = PendingUpdate(
                 image=image,
@@ -250,7 +400,10 @@ def poller_loop() -> None:
         time.sleep(CONFIG["POLL_INTERVAL"])
 
 
-# HTML template for approval page
+# =============================================================================
+# Web UI
+# =============================================================================
+
 APPROVAL_PAGE = """
 <!DOCTYPE html>
 <html>
@@ -364,6 +517,7 @@ def index():
         "status": "ok",
         "pending_updates": pending_count,
         "poll_interval": CONFIG["POLL_INTERVAL"],
+        "notify_method": CONFIG["NOTIFY_METHOD"],
     })
 
 
@@ -384,19 +538,15 @@ def approve(token: str):
 
         totp = pyotp.TOTP(CONFIG["TOTP_SECRET"])
         if totp.verify(code, valid_window=1):
-            # Approved! Pull and restart
             log.info("TOTP verified for %s, proceeding with update", update.image)
 
-            # Update state with new digest
             state = load_state()
             state["digests"][update.image] = update.new_digest
             save_state(state)
 
-            # Remove from pending
             with state_lock:
                 del pending_updates[token]
 
-            # Pull and restart in background
             threading.Thread(
                 target=pull_and_restart,
                 args=(update.image, update.container),
@@ -420,15 +570,16 @@ def approve(token: str):
 
 @app.route("/pending")
 def list_pending():
-    """List pending updates (for debugging)."""
+    """List pending updates."""
     with state_lock:
         pending = [
             {
                 "image": u.image,
                 "container": u.container,
                 "detected_at": u.detected_at.isoformat(),
+                "approve_url": f"{CONFIG['GATE_URL']}/approve/{token}",
             }
-            for u in pending_updates.values()
+            for token, u in pending_updates.items()
         ]
     return jsonify(pending)
 
@@ -440,14 +591,12 @@ def main():
         return
 
     log.info("Starting approval gate...")
+    log.info("Notification method: %s", CONFIG["NOTIFY_METHOD"])
     log.info("Poll interval: %ds", CONFIG["POLL_INTERVAL"])
-    log.info("Approval timeout: %ds", CONFIG["APPROVAL_TIMEOUT"])
 
-    # Start background poller
     poller_thread = threading.Thread(target=poller_loop, daemon=True)
     poller_thread.start()
 
-    # Run Flask
     app.run(host="0.0.0.0", port=9999, debug=False)
 
 
