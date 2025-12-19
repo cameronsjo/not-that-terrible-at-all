@@ -1,0 +1,53 @@
+# Workflow caller template
+#
+# Add this file to your app repo at: .github/workflows/deploy.yml
+#
+# This is the ONLY file you need to add to deploy your app!
+# Everything else is handled by the reusable workflow.
+
+name: Deploy to Unraid
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  # Uncomment to also trigger on tags (for semver strategy)
+  # tags:
+  #   - 'v*'
+
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    # Point this to YOUR org/repo containing the reusable workflow
+    uses: YOUR_ORG/not-that-terrible-at-all/.github/workflows/deploy.yml@main
+
+    # Inherit org-level secrets automatically
+    secrets: inherit
+
+    # Customize these inputs for your app
+    with:
+      # App name (used for image name in GHCR)
+      # Defaults to repo name if not specified
+      # app-name: my-cool-app
+
+      # Path to Dockerfile (default: Dockerfile)
+      # dockerfile: Dockerfile
+
+      # Docker build context (default: .)
+      # context: .
+
+      # Target platforms (default: linux/amd64)
+      # Add linux/arm64 for Raspberry Pi, Apple Silicon, etc.
+      # platforms: linux/amd64,linux/arm64
+
+      # Build arguments (one per line)
+      # build-args: |
+      #   NODE_ENV=production
+      #   API_URL=https://api.example.com
+
+      # Tagging strategy (default: latest)
+      # Options: latest, sha, branch, semver
+      # tag-strategy: latest

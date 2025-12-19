@@ -1,0 +1,75 @@
+# Docker Compose template for deploying apps on Unraid
+#
+# Copy this to your Unraid server and customize:
+#   /mnt/user/appdata/apps/APP_NAME/docker-compose.yml
+#
+# Then run: docker-compose up -d
+#
+# Watchtower will automatically update when new images are pushed.
+
+services:
+  app:
+    # Replace with your actual image from GHCR
+    image: ghcr.io/YOUR_GITHUB_USERNAME/APP_NAME:latest
+    container_name: APP_NAME
+    restart: unless-stopped
+
+    # Port mapping: HOST:CONTAINER
+    # Change the host port to avoid conflicts
+    ports:
+      - "3000:3000"
+
+    # Environment variables
+    # Option 1: Inline (for non-sensitive values)
+    environment:
+      - NODE_ENV=production
+      - TZ=America/Chicago
+
+    # Option 2: From .env file (for sensitive values)
+    # Create .env file in same directory as docker-compose.yml
+    env_file:
+      - .env
+
+    # Mount volumes for persistent data
+    volumes:
+      - ./data:/app/data
+      # Add more as needed:
+      # - ./config:/app/config
+      # - ./logs:/app/logs
+
+    # Health check (optional, override container's default)
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 10s
+
+    # Labels for Watchtower and reverse proxy
+    labels:
+      # Watchtower: enable auto-updates for this container
+      - "com.centurylinklabs.watchtower.enable=true"
+
+      # Traefik labels (if using Traefik instead of NPM)
+      # - "traefik.enable=true"
+      # - "traefik.http.routers.APP_NAME.rule=Host(`app.yourdomain.com`)"
+      # - "traefik.http.routers.APP_NAME.entrypoints=websecure"
+      # - "traefik.http.routers.APP_NAME.tls.certresolver=letsencrypt"
+      # - "traefik.http.services.APP_NAME.loadbalancer.server.port=3000"
+
+    # Network (use if you have a shared network for reverse proxy)
+    # networks:
+    #   - proxy
+
+    # Resource limits (optional but recommended)
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+# Shared network for reverse proxy (uncomment if using)
+# networks:
+#   proxy:
+#     external: true

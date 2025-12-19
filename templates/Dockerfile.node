@@ -1,0 +1,45 @@
+# Node.js application Dockerfile
+# Works for most Express, Fastify, Next.js, etc. apps
+#
+# Build: docker build -f Dockerfile -t app .
+# Run:   docker run -p 3000:3000 app
+
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Install dependencies first (better layer caching)
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Copy application source
+COPY . .
+
+# Build if there's a build script
+RUN if [ -f "package.json" ] && grep -q '"build"' package.json; then \
+      npm run build; \
+    fi
+
+# Production image
+FROM node:20-alpine AS runtime
+
+WORKDIR /app
+
+# Create non-root user for security
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -u 1001 -S appuser -G appgroup
+
+# Copy built application
+COPY --from=builder --chown=appuser:appgroup /app .
+
+USER appuser
+
+# Default port (override with -e PORT=xxxx)
+ENV PORT=3000
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT}/health || exit 1
+
+CMD ["node", "index.js"]

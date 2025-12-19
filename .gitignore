@@ -1,0 +1,23 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Secrets (never commit these)
+*.pem
+*.key
+credentials.json
+secrets.yaml
