@@ -80,6 +80,7 @@ class PendingUpdate:
 
     image: str
     container: str
+    app_dir: str  # Directory containing docker-compose.yml
     old_digest: str
     new_digest: str
     detected_at: datetime
@@ -141,6 +142,76 @@ def get_remote_digest(image: str) -> str | None:
         log.error("Error fetching digest for %s: %s", image, e)
 
     return None
+
+
+def pull_config_artifact(image: str, app_dir: str) -> bool:
+    """Pull and extract config artifact from registry."""
+    # Config artifact is stored at image:config
+    config_ref = image.rsplit(":", 1)[0] + ":config"
+
+    try:
+        log.info("Checking for config artifact: %s", config_ref)
+
+        # Use oras to pull the config artifact
+        # First check if oras is available
+        result = subprocess.run(
+            ["which", "oras"],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            log.warning("oras not installed, skipping config sync")
+            return True  # Not a failure, just skip
+
+        # Create temp directory for download
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pull_result = subprocess.run(
+                ["oras", "pull", config_ref, "-o", tmpdir],
+                capture_output=True,
+                env={
+                    **os.environ,
+                    "ORAS_REGISTRY": "ghcr.io",
+                },
+            )
+
+            if pull_result.returncode != 0:
+                stderr = pull_result.stderr.decode()
+                if "not found" in stderr.lower() or "manifest unknown" in stderr.lower():
+                    log.info("No config artifact found for %s, skipping", image)
+                    return True  # Not a failure, just no config to sync
+                log.error("Failed to pull config artifact: %s", stderr)
+                return False
+
+            # Find and extract the tarball
+            tarball = Path(tmpdir) / "config.tar.gz"
+            if not tarball.exists():
+                # Look for any .gz file
+                gz_files = list(Path(tmpdir).glob("*.gz"))
+                if gz_files:
+                    tarball = gz_files[0]
+                else:
+                    log.warning("No config tarball found in artifact")
+                    return True
+
+            # Extract to app directory
+            log.info("Extracting config to %s", app_dir)
+            Path(app_dir).mkdir(parents=True, exist_ok=True)
+
+            extract_result = subprocess.run(
+                ["tar", "xzf", str(tarball), "-C", app_dir],
+                capture_output=True,
+            )
+
+            if extract_result.returncode != 0:
+                log.error("Failed to extract config: %s", extract_result.stderr.decode())
+                return False
+
+            log.info("Config synced successfully to %s", app_dir)
+            return True
+
+    except Exception as e:
+        log.error("Error syncing config for %s: %s", image, e)
+        return False
 
 
 # =============================================================================
@@ -309,14 +380,31 @@ def send_notification(update: PendingUpdate) -> bool:
         return False
 
 
-def pull_and_restart(image: str, container: str) -> bool:
-    """Pull new image and restart container."""
+def pull_and_restart(image: str, container: str, app_dir: str | None = None) -> bool:
+    """Pull config artifact (if any), pull new image, and restart container."""
     try:
+        # Step 1: Sync config artifact (if app_dir provided and oras available)
+        if app_dir:
+            if not pull_config_artifact(image, app_dir):
+                log.error("Config sync failed, aborting update")
+                return False
+
+        # Step 2: Pull new image
         log.info("Pulling image: %s", image)
         subprocess.run(["docker", "pull", image], check=True, capture_output=True)
 
-        log.info("Restarting container: %s", container)
-        subprocess.run(["docker", "restart", container], check=True, capture_output=True)
+        # Step 3: Restart using docker-compose if app_dir provided, otherwise just restart
+        if app_dir and Path(app_dir).joinpath("docker-compose.yml").exists():
+            log.info("Restarting via docker-compose in %s", app_dir)
+            subprocess.run(
+                ["docker", "compose", "up", "-d", "--remove-orphans"],
+                cwd=app_dir,
+                check=True,
+                capture_output=True,
+            )
+        else:
+            log.info("Restarting container: %s", container)
+            subprocess.run(["docker", "restart", container], check=True, capture_output=True)
 
         log.info("Successfully updated %s", container)
         return True
@@ -333,6 +421,7 @@ def check_for_updates() -> None:
     for entry in images:
         image = entry.get("image", "")
         container = entry.get("container", "")
+        app_dir = entry.get("app_dir", "")  # Optional: directory for config sync
 
         if not image or not container:
             continue
@@ -360,6 +449,7 @@ def check_for_updates() -> None:
             update = PendingUpdate(
                 image=image,
                 container=container,
+                app_dir=app_dir,
                 old_digest=known_digest or "unknown",
                 new_digest=current_digest,
                 detected_at=datetime.now(),
@@ -549,7 +639,7 @@ def approve(token: str):
 
             threading.Thread(
                 target=pull_and_restart,
-                args=(update.image, update.container),
+                args=(update.image, update.container, update.app_dir or None),
                 daemon=True,
             ).start()
 

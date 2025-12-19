@@ -1,0 +1,27 @@
+# Strategy One: SSH + SCP (Fast, Automated)
+#
+# USE THIS FOR: Experimental apps, dev/staging, rapid iteration
+# TRADEOFF: SSH key in GitHub. If GitHub compromised, attacker has server access.
+#
+# Required org secrets:
+#   UNRAID_HOST, UNRAID_USER, UNRAID_SSH_KEY, GHCR_PAT
+#
+# See: https://github.com/cameronsjo/not-that-terrible-at-all/blob/main/docs/choosing-a-strategy.md
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    uses: cameronsjo/not-that-terrible-at-all/.github/workflows/deploy-ssh.yml@main
+    secrets: inherit
+    # with:
+    #   config-files: "docker-compose.yml,config/*"  # Files to SCP
+    #   app-dir: "/mnt/user/appdata/myapp"           # Override default path
+    #   env-vars: |                                   # Extra env vars
+    #     NODE_ENV=production
+    #     DEBUG=false

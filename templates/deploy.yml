@@ -1,18 +1,19 @@
-# Workflow caller template
+# Strategy Two: TOTP Gate (Secure, Manual Approval)
+#
+# USE THIS FOR: Production apps, sensitive data, paranoid users
+# SECURITY: If GitHub compromised, attacker blocked by TOTP on your phone.
 #
 # Add this file to your app repo at: .github/workflows/deploy.yml
+# Then add entry to images.json on your Unraid approval gate.
 #
-# This is the ONLY file you need to add to deploy your app!
-# Everything else is handled by the reusable workflow.
+# See: https://github.com/cameronsjo/not-that-terrible-at-all/blob/main/docs/choosing-a-strategy.md
 #
 # Security features enabled by default:
 # - Cosign image signing (keyless via Sigstore)
 # - SBOM attestation
 # - Pinned actions (SHA, not version tags)
-#
-# Optional security (configure in GitHub settings):
-# - Environment protection (requires approval before build)
-# - Your own cosign signing key
+# - Config artifact sync (keeps docker-compose.yml in sync)
+# - TOTP approval gate (requires 6-digit code from your phone)
 
 name: Deploy to Unraid
 
@@ -71,6 +72,13 @@ jobs:
       # Sign images with cosign (default: true)
       # Enables Sigstore keyless signing + SBOM attestation
       sign-image: true
+
+      # Push config artifact for TOTP gate to sync (default: true)
+      # This keeps your docker-compose.yml in sync with your Git repo
+      push-config: true
+
+      # Config files to include in artifact (space-separated)
+      # config-files: "docker-compose.yml config/nginx.conf"
 
       # Environment protection - requires approval before build
       # Set up the environment in GitHub repo settings first:

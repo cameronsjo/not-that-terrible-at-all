@@ -50,10 +50,19 @@ Create `config/images.json`:
 [
   {
     "image": "ghcr.io/yourorg/yourapp:latest",
-    "container": "yourapp"
+    "container": "yourapp",
+    "app_dir": "/mnt/user/appdata/yourapp"
   }
 ]
 ```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `image` | Yes | Full image reference (e.g., `ghcr.io/org/app:latest`) |
+| `container` | Yes | Container name to restart |
+| `app_dir` | No | Path to docker-compose.yml directory for config sync |
+
+**Config Sync:** If `app_dir` is provided and the image has a `:config` artifact, the gate will pull and extract the config before restarting. This keeps your `docker-compose.yml` in sync with your Git repo.
 
 ### 5. Start
 

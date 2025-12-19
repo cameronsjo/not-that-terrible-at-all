@@ -59,6 +59,16 @@ on:
         required: false
         type: boolean
         default: true
+      push-config:
+        description: "Push config files as OCI artifact for TOTP gate config sync"
+        required: false
+        type: boolean
+        default: true
+      config-files:
+        description: "Config files to include in artifact (space-separated)"
+        required: false
+        type: string
+        default: "docker-compose.yml"
     secrets:
       GHCR_TOKEN:
         description: "GitHub token with packages:write scope (defaults to GITHUB_TOKEN)"
@@ -97,6 +107,13 @@ jobs:
         if: inputs.sign-image
         # https://github.com/sigstore/cosign-installer/releases/tag/v3.7.0
         uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da
+
+      - name: Install ORAS
+        if: inputs.push-config
+        # https://github.com/oras-project/setup-oras/releases/tag/v1.2.2
+        uses: oras-project/setup-oras@v1
+        with:
+          version: "1.2.0"
 
       - name: Determine image name
         id: image-name
@@ -208,6 +225,43 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
+      - name: Push config artifact
+        if: inputs.push-config
+        env:
+          IMAGE: ${{ steps.tags.outputs.image }}
+          CONFIG_FILES: ${{ inputs.config-files }}
+        run: |
+          echo "Packaging config files: ${CONFIG_FILES}"
+
+          # Create config bundle
+          mkdir -p /tmp/config-bundle
+          for file in ${CONFIG_FILES}; do
+            if [ -e "$file" ]; then
+              # Preserve directory structure
+              dir=$(dirname "$file")
+              mkdir -p "/tmp/config-bundle/$dir"
+              cp -r "$file" "/tmp/config-bundle/$dir/"
+              echo "  Added: $file"
+            else
+              echo "  Warning: $file not found, skipping"
+            fi
+          done
+
+          # Create tarball
+          cd /tmp/config-bundle
+          tar czf ../config.tar.gz .
+          cd -
+
+          # Push as OCI artifact with :config tag
+          CONFIG_TAG="${IMAGE}:config"
+          echo "Pushing config artifact to ${CONFIG_TAG}"
+
+          oras push "${CONFIG_TAG}" \
+            --artifact-type application/vnd.deploy.config \
+            /tmp/config-bundle/../config.tar.gz:application/gzip
+
+          echo "Config artifact pushed successfully"
+
       - name: Output image details
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -236,5 +290,9 @@ jobs:
             echo "  --certificate-oidc-issuer='https://token.actions.githubusercontent.com'" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           fi
+          if [ "${{ inputs.push-config }}" = "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Config Artifact:** \`${IMAGE}:config\`" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Watchtower will pick this up on next poll (if signature verified)." >> $GITHUB_STEP_SUMMARY
+          echo "TOTP Approval Gate will pick this up on next poll." >> $GITHUB_STEP_SUMMARY

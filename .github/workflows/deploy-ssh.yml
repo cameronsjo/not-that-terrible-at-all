@@ -1,0 +1,217 @@
+# Strategy One: SSH + SCP GitOps Lite
+# Fast, automatic deployments with full config sync
+#
+# USE THIS WHEN:
+#   - Speed is priority (< 2 min deploy)
+#   - You want Git as single source of truth for configs
+#   - You trust your GitHub account security (2FA enabled)
+#   - Experimental/non-critical apps
+#
+# TRADEOFF: SSH key stored in GitHub. If GitHub compromised, attacker has server access.
+#
+# Required secrets (org-level recommended):
+#   UNRAID_HOST: IP or hostname of Unraid server
+#   UNRAID_USER: SSH user (usually root)
+#   UNRAID_SSH_KEY: Private SSH key
+#   GHCR_PAT: Personal access token with read:packages scope
+#
+# Optional secrets:
+#   APP_ENV_SECRETS: Additional env vars for .env file
+
+name: Deploy via SSH
+
+on:
+  workflow_call:
+    inputs:
+      app-name:
+        description: "Name for the Docker image and app directory"
+        required: false
+        type: string
+      dockerfile:
+        description: "Path to Dockerfile"
+        required: false
+        type: string
+        default: "Dockerfile"
+      context:
+        description: "Docker build context"
+        required: false
+        type: string
+        default: "."
+      platforms:
+        description: "Target platforms"
+        required: false
+        type: string
+        default: "linux/amd64"
+      build-args:
+        description: "Docker build arguments"
+        required: false
+        type: string
+        default: ""
+      app-dir:
+        description: "Unraid appdata directory path"
+        required: false
+        type: string
+        default: ""
+      config-files:
+        description: "Files to SCP (comma-separated, supports globs)"
+        required: false
+        type: string
+        default: "docker-compose.yml"
+      env-vars:
+        description: "Additional env vars for .env (KEY=value, one per line)"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      UNRAID_HOST:
+        required: true
+      UNRAID_USER:
+        required: true
+      UNRAID_SSH_KEY:
+        required: true
+      GHCR_PAT:
+        required: true
+      APP_ENV_SECRETS:
+        required: false
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      app-name: ${{ steps.meta.outputs.app-name }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349
+
+      - name: Determine names
+        id: meta
+        run: |
+          if [ -n "${{ inputs.app-name }}" ]; then
+            APP_NAME="${{ inputs.app-name }}"
+          else
+            APP_NAME="${{ github.event.repository.name }}"
+          fi
+
+          # Lowercase for Docker compatibility
+          APP_NAME_LOWER=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
+          OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER_LOWER}/${APP_NAME_LOWER}"
+
+          echo "app-name=${APP_NAME_LOWER}" >> $GITHUB_OUTPUT
+          echo "image=${IMAGE}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: true
+          tags: ${{ steps.meta.outputs.image }}:latest,${{ steps.meta.outputs.image }}:${{ github.sha }}
+          build-args: ${{ inputs.build-args }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  deploy-to-unraid:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Determine app directory
+        id: dir
+        run: |
+          if [ -n "${{ inputs.app-dir }}" ]; then
+            echo "path=${{ inputs.app-dir }}" >> $GITHUB_OUTPUT
+          else
+            echo "path=/mnt/user/appdata/${{ needs.build-and-push.outputs.app-name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Copy config files via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.UNRAID_HOST }}
+          username: ${{ secrets.UNRAID_USER }}
+          key: ${{ secrets.UNRAID_SSH_KEY }}
+          port: 22
+          source: ${{ inputs.config-files }}
+          target: ${{ steps.dir.outputs.path }}
+          strip_components: 0
+
+      - name: Deploy container
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
+          APP_DIR: ${{ steps.dir.outputs.path }}
+          EXTRA_ENV: ${{ inputs.env-vars }}
+          APP_SECRETS: ${{ secrets.APP_ENV_SECRETS }}
+        with:
+          host: ${{ secrets.UNRAID_HOST }}
+          username: ${{ secrets.UNRAID_USER }}
+          key: ${{ secrets.UNRAID_SSH_KEY }}
+          port: 22
+          envs: IMAGE,APP_DIR,EXTRA_ENV,APP_SECRETS
+          script: |
+            set -e
+            cd "$APP_DIR"
+
+            # Create/update .env file
+            echo "# Auto-generated by GitHub Actions - $(date -u +%Y-%m-%dT%H:%M:%SZ)" > .env
+            echo "IMAGE_NAME=$IMAGE" >> .env
+
+            # Add extra env vars if provided
+            if [ -n "$EXTRA_ENV" ]; then
+              echo "$EXTRA_ENV" >> .env
+            fi
+
+            # Add secrets if provided
+            if [ -n "$APP_SECRETS" ]; then
+              echo "$APP_SECRETS" >> .env
+            fi
+
+            # Secure the .env file
+            chmod 600 .env
+
+            # Authenticate with GHCR using PAT for persistent access
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            # Pull and restart
+            docker compose pull
+            docker compose up -d --remove-orphans
+
+            # Cleanup old images
+            docker image prune -f
+
+            echo "Deployed $IMAGE successfully"
+
+      - name: Output deployment details
+        run: |
+          echo "## SSH Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ needs.build-and-push.outputs.image }}:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**App Directory:** \`${{ steps.dir.outputs.path }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Config Files:** \`${{ inputs.config-files }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Container is now running on Unraid." >> $GITHUB_STEP_SUMMARY
